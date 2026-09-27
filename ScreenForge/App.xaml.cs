@@ -82,9 +82,9 @@ public partial class App : Application
                 $"Bölge yakalamak için {regionKey} kısayolunu kullanabilirsiniz.");
         }
 
-        Updates.AutoUpdateService.CheckOnStartup(
-            (title, message) => Dispatcher.Invoke(() => _tray?.ShowMessage(title, message)),
-            () => Dispatcher.Invoke(Shutdown));
+        _tray.GetAvailableUpdate = () => Updates.AutoUpdateService.AvailableVersion;
+        _tray.UpdateRequested += () => _ = Updates.AutoUpdateService.ApplyAvailableAsync();
+        Updates.AutoUpdateService.CheckOnStartup(() => Dispatcher.Invoke(Shutdown));
     }
 
     /// <summary>Ayarlardaki tüm kısayolları (yeniden) kaydeder.</summary>

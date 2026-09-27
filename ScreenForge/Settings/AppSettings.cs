@@ -51,7 +51,7 @@ public sealed class AppSettings
     public string TranslateTargetLanguage { get; set; } = "tr";
     /// <summary>Ana dil (hızlı çeviride varsayılan hedef).</summary>
     public string TranslateNativeLanguage { get; set; } = "";
-    /// <summary>Çevrilecek dil. Görsel çeviri bunu varsayar.</summary>
+    /// <summary>Çevrilecek dil. Hızlı çeviride ana dildeki metin buna döner.</summary>
     public string TranslatePairLanguage { get; set; } = "";
     /// <summary>Görsel çeviri menüsünde varsayılandan farklı son seçilen diller.</summary>
     public List<string> RecentVisualLanguages { get; set; } = [];

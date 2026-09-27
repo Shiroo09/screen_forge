@@ -23,6 +23,8 @@ public sealed class TrayIconService : IDisposable
     public event Action? SettingsRequested;
     public event Action? AboutRequested;
     public event Action? ExitRequested;
+    public event Action? UpdateRequested;
+    public Func<string?>? GetAvailableUpdate { get; set; }
     public event Action<bool>? PresenterEnabledChanged;
     public Func<bool>? GetPresenterEnabled { get; set; }
     public event Action<bool>? SubtitleEnabledChanged;
@@ -70,6 +72,7 @@ public sealed class TrayIconService : IDisposable
 
         menu.Opened += (_, _) =>
         {
+            SyncUpdateItem(menu);
             foreach (var item in menu.Items.OfType<MenuItem>())
             {
                 if (item.Tag as string == "presenter")
@@ -123,6 +126,62 @@ public sealed class TrayIconService : IDisposable
             PaintToggle(item, "Canlı altyazı", on);
     }
 
+    private MenuItem? _updateItem;
+    private Separator? _updateSep;
+    private static readonly SolidColorBrush UpdateBrush = CreateUpdateBrush();
+
+    private static SolidColorBrush CreateUpdateBrush()
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(0xEA, 0x6F, 0x12));
+        brush.Freeze();
+        return brush;
+    }
+
+    private void SyncUpdateItem(ContextMenu menu)
+    {
+        string? version = GetAvailableUpdate?.Invoke();
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            if (_updateItem != null)
+                menu.Items.Remove(_updateItem);
+            if (_updateSep != null)
+                menu.Items.Remove(_updateSep);
+            return;
+        }
+
+        string label = $"Güncelleme mevcut ({version})";
+        if (_updateItem == null)
+        {
+            _updateItem = new MenuItem
+            {
+                Header = UpdateHeader(label),
+                Icon = Glyph(0xE896, UpdateBrush),
+                FontWeight = FontWeights.SemiBold,
+                Foreground = UpdateBrush,
+                Tag = "update",
+            };
+            _updateItem.Click += (_, _) => UpdateRequested?.Invoke();
+            _updateSep = new Separator();
+        }
+        else if (_updateItem.Header is TextBlock block)
+        {
+            block.Text = label;
+        }
+
+        if (!menu.Items.Contains(_updateItem))
+        {
+            menu.Items.Insert(0, _updateItem);
+            menu.Items.Insert(1, _updateSep);
+        }
+    }
+
+    private static TextBlock UpdateHeader(string label) => new()
+    {
+        Text = label,
+        Foreground = UpdateBrush,
+        FontWeight = FontWeights.SemiBold,
+    };
+
     private static MenuItem MenuItem(string header, Action action, int glyph, bool isDefault = false)
     {
         var item = new MenuItem
@@ -140,13 +199,13 @@ public sealed class TrayIconService : IDisposable
         item.Header = on ? title + "  ✓" : title;
     }
 
-    private static TextBlock Glyph(int code) => new()
+    private static TextBlock Glyph(int code, Brush? foreground = null) => new()
     {
         Text = char.ConvertFromUtf32(code),
         FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
         FontSize = 13,
         Width = 16,
-        Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x93, 0xA6)),
+        Foreground = foreground ?? new SolidColorBrush(Color.FromRgb(0x8A, 0x93, 0xA6)),
         TextAlignment = TextAlignment.Center,
         VerticalAlignment = VerticalAlignment.Center,
     };

@@ -402,7 +402,7 @@ public partial class CaptureOverlayWindow : Window
         {
             try
             {
-                string tl = VisualTranslateRecents.DefaultCode(_settings);
+                string tl = VisualTranslateRecents.ActiveCode(_settings);
                 _visualClient ??= new GoogleTranslateVisualClient();
                 await _visualClient.WarmupAsync(tl, null).ConfigureAwait(true);
             }
@@ -1660,11 +1660,7 @@ public partial class CaptureOverlayWindow : Window
         // Çevir: seçili bölgeyi Google Lens ile çevirip aynı yerde göster
         if (_mode is CaptureMode.Region or CaptureMode.FullScreen)
         {
-            string pair = VisualTranslateRecents.DefaultCode(_settings);
-            string pairLabel = TranslateLanguageDefaults.Label(pair);
-            _translateSplit = MakeTranslateSplit(
-                $"Seçili alanı {pairLabel} diline çevir",
-                () => _ = DoTranslateAsync(null));
+            _translateSplit = MakeTranslateSplit(() => _ = DoTranslateAsync(null));
             ToolActionStack.Children.Add(_translateSplit);
             ToolActionStack.Children.Add(MakeCmd("IconOcr", "Metin",
                 "Seçili alandaki yazıyı panoya kopyala",
@@ -2117,7 +2113,7 @@ public partial class CaptureOverlayWindow : Window
         try
         {
             string targetLang = string.IsNullOrWhiteSpace(targetCode)
-                ? VisualTranslateRecents.DefaultCode(_settings)
+                ? VisualTranslateRecents.ActiveCode(_settings)
                 : targetCode.Trim();
             string? sourceLang = null;
 
@@ -3026,9 +3022,16 @@ public partial class CaptureOverlayWindow : Window
         });
     }
 
-    private FrameworkElement MakeTranslateSplit(string tip, Action onClick)
+    private string VisualTranslateTip()
     {
-        var main = MakeCmd("IconTranslate", "Görsel Çeviri", tip, onClick);
+        string label = TranslateLanguageDefaults.Label(VisualTranslateRecents.ActiveCode(_settings));
+        return $"Seçili alanı {label} diline çevir";
+    }
+
+    private FrameworkElement MakeTranslateSplit(Action onClick)
+    {
+        var main = MakeCmd("IconTranslate", "Görsel Çeviri", VisualTranslateTip(), onClick);
+        main.MouseEnter += (_, _) => SetHoverHint(VisualTranslateTip());
         var chevron = new Button
         {
             Cursor = Cursors.Hand,
@@ -3070,15 +3073,16 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
         if (_translateSplit == null || _translateBusy) return;
-        string def = VisualTranslateRecents.DefaultCode(_settings);
+        string active = VisualTranslateRecents.ActiveCode(_settings);
         _translateMenu = new VisualTranslatePickerPopup(
             _translateSplit,
             this,
-            def,
+            active,
             VisualTranslateRecents.Visible(_settings),
             code =>
             {
-                if (!string.Equals(code, def, StringComparison.OrdinalIgnoreCase))
+                VisualTranslateRecents.SetSession(_settings, code);
+                if (!string.Equals(code, VisualTranslateRecents.NativeCode(_settings), StringComparison.OrdinalIgnoreCase))
                 {
                     VisualTranslateRecents.Remember(_settings, code);
                     _settings.Save();
