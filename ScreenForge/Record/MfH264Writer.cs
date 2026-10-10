@@ -5,36 +5,42 @@ namespace ScreenForge.Record;
 
 internal sealed class MfH264Writer : IDisposable
 {
-    private readonly IMFSinkWriter _writer;
-    private readonly int _streamIndex;
-    private readonly int _audioStream;
+    private IMFSinkWriter? _writer;
+    private int _streamIndex = -1;
+    private int _audioStream = -1;
     private readonly object _writeLock = new();
     private readonly int _width;
     private readonly int _height;
     private readonly long _frameDuration;
     private bool _started;
     private bool _disposed;
+    private bool _mfHeld;
 
-    public MfH264Writer(string path, int width, int height, int fps, int bitrate, bool audio = false)
+    public MfH264Writer(string path, int width, int height, int fps, int bitrate, bool audio = false, bool hardware = true)
     {
         _width = width;
         _height = height;
         fps = Math.Max(1, fps);
         _frameDuration = 10_000_000L / fps;
 
-        MediaFactory.MFStartup();
-
-        using var attrs = MediaFactory.MFCreateAttributes(4);
-        attrs.Set(SinkWriterAttributeKeys.ReadwriteEnableHardwareTransforms, true);
-        attrs.Set(SinkWriterAttributeKeys.DisableThrottling, true);
+        MfSession.Enter();
+        _mfHeld = true;
 
         try
         {
+            using var attrs = MediaFactory.MFCreateAttributes(8);
+            attrs.Set(SinkWriterAttributeKeys.ReadwriteEnableHardwareTransforms, hardware);
+            // D3D aygıtı yoksa veya meşgulse yazılım dönüşümüne düş; aksi halde
+            // sink ilk örnekte kendini Shutdown eder (MF_E_SHUTDOWN).
+            attrs.Set(SinkWriterAttributeKeys.ReadwriteD3DOptional, true);
+            attrs.Set(SinkWriterAttributeKeys.DisableThrottling, true);
+            attrs.Set(SinkWriterAttributeKeys.LowLatency, true);
+
             _writer = MediaFactory.MFCreateSinkWriterFromURL(path, null, attrs);
         }
         catch (Exception ex)
         {
-            MediaFactory.MFShutdown();
+            Dispose();
             throw new InvalidOperationException("Bu cihazda H.264 kodlayıcı yok (Media Foundation).", ex);
         }
 
@@ -47,7 +53,7 @@ internal sealed class MfH264Writer : IDisposable
             outType.Set(MediaTypeAttributeKeys.FrameSize, Pack(width, height));
             outType.Set(MediaTypeAttributeKeys.FrameRate, Pack(fps, 1));
             outType.Set(MediaTypeAttributeKeys.PixelAspectRatio, Pack(1, 1));
-            _streamIndex = _writer.AddStream(outType);
+            _streamIndex = _writer!.AddStream(outType);
         }
 
         using (var inType = MediaFactory.MFCreateMediaType())
@@ -60,7 +66,7 @@ internal sealed class MfH264Writer : IDisposable
             inType.Set(MediaTypeAttributeKeys.PixelAspectRatio, Pack(1, 1));
             try
             {
-                _writer.SetInputMediaType(_streamIndex, inType, null);
+                _writer!.SetInputMediaType(_streamIndex, inType, null);
             }
             catch (Exception ex)
             {
@@ -69,57 +75,78 @@ internal sealed class MfH264Writer : IDisposable
             }
         }
 
-        _audioStream = audio ? TryAddAudio() : -1;
-        _writer.BeginWriting();
-        _started = true;
+        try
+        {
+            _audioStream = audio ? TryAddAudio() : -1;
+            _writer!.BeginWriting();
+            _started = true;
+        }
+        catch (Exception ex)
+        {
+            Dispose();
+            throw new InvalidOperationException("Bu cihazda H.264 kodlayıcı yok (Media Foundation).", ex);
+        }
     }
 
     public bool HasAudio => _audioStream >= 0;
 
-    public void WriteBgra(byte[] bgra, long timestampHundredNanos)
+    /// <summary>Yazar kapanmışsa kareyi yutar ve false döner. Çağıran durdurma yarışında bunu hata saymasın.</summary>
+    public bool WriteBgra(byte[] bgra, long timestampHundredNanos)
     {
         int stride = _width * 4;
         int byteCount = stride * _height;
-        using var buffer = MediaFactory.MFCreateMemoryBuffer(byteCount);
-        buffer.Lock(out nint data, out _, out _);
-        try
-        {
-            for (int y = 0; y < _height; y++)
-            {
-                Marshal.Copy(
-                    bgra,
-                    y * stride,
-                    data + (_height - 1 - y) * stride,
-                    stride);
-            }
-        }
-        finally { buffer.Unlock(); }
-        buffer.CurrentLength = byteCount;
-
-        using var sample = MediaFactory.MFCreateSample();
-        sample.AddBuffer(buffer);
-        sample.SampleTime = timestampHundredNanos;
-        sample.SampleDuration = _frameDuration;
         lock (_writeLock)
+        {
+            if (_disposed || !_started || _writer == null)
+                return false;
+
+            using var buffer = MediaFactory.MFCreateMemoryBuffer(byteCount);
+            buffer.Lock(out nint data, out _, out _);
+            try
+            {
+                for (int y = 0; y < _height; y++)
+                {
+                    Marshal.Copy(
+                        bgra,
+                        y * stride,
+                        data + (_height - 1 - y) * stride,
+                        stride);
+                }
+            }
+            finally { buffer.Unlock(); }
+            buffer.CurrentLength = byteCount;
+
+            using var sample = MediaFactory.MFCreateSample();
+            sample.AddBuffer(buffer);
+            sample.SampleTime = timestampHundredNanos;
+            sample.SampleDuration = _frameDuration;
             _writer.WriteSample(_streamIndex, sample);
+            return true;
+        }
     }
 
-    public void WriteAudio(byte[] pcm, long timestampHundredNanos)
+    public bool WriteAudio(byte[] pcm, long timestampHundredNanos)
     {
-        if (_audioStream < 0 || pcm.Length < 4) return;
-        using var buffer = MediaFactory.MFCreateMemoryBuffer(pcm.Length);
-        buffer.Lock(out nint data, out _, out _);
-        try { Marshal.Copy(pcm, 0, data, pcm.Length); }
-        finally { buffer.Unlock(); }
-        buffer.CurrentLength = pcm.Length;
-
-        long duration = pcm.Length * 10_000_000L / (AudioMixer.SampleRate * AudioMixer.BytesPerFrame);
-        using var sample = MediaFactory.MFCreateSample();
-        sample.AddBuffer(buffer);
-        sample.SampleTime = timestampHundredNanos;
-        sample.SampleDuration = Math.Max(1, duration);
+        if (_audioStream < 0 || pcm.Length < 4) return false;
         lock (_writeLock)
+        {
+            if (_disposed || !_started || _writer == null)
+                return false;
+
+            using var buffer = MediaFactory.MFCreateMemoryBuffer(pcm.Length);
+            buffer.Lock(out nint data, out _, out _);
+            try { Marshal.Copy(pcm, 0, data, pcm.Length); }
+            finally { buffer.Unlock(); }
+            buffer.CurrentLength = pcm.Length;
+
+            long duration = pcm.Length * 10_000_000L / (AudioMixer.SampleRate * AudioMixer.BytesPerFrame);
+            using var sample = MediaFactory.MFCreateSample();
+            sample.AddBuffer(buffer);
+            sample.SampleTime = timestampHundredNanos;
+            sample.SampleDuration = Math.Max(1, duration);
             _writer.WriteSample(_audioStream, sample);
+            return true;
+        }
     }
 
     private int TryAddAudio()
@@ -136,7 +163,10 @@ internal sealed class MfH264Writer : IDisposable
                 aac.Set(MediaTypeAttributeKeys.AudioBitsPerSample, 16u);
                 aac.Set(MediaTypeAttributeKeys.AudioAvgBytesPerSecond, 16000u);
                 aac.Set(MediaTypeAttributeKeys.AacPayloadType, 0u);
-                stream = _writer.AddStream(aac);
+                // LC-AAC Level 2. Bazı Windows sürümleri bu alan olmadan
+                // AAC MFT'yi kurar, ilk örnekte sink'i Shutdown eder.
+                aac.Set(MediaTypeAttributeKeys.AacAudioProfileLevelIndication, 0x29u);
+                stream = _writer!.AddStream(aac);
             }
 
             using (var pcm = MediaFactory.MFCreateMediaType())
@@ -149,7 +179,7 @@ internal sealed class MfH264Writer : IDisposable
                 pcm.Set(MediaTypeAttributeKeys.AudioBlockAlignment, (uint)AudioMixer.BytesPerFrame);
                 pcm.Set(MediaTypeAttributeKeys.AudioAvgBytesPerSecond,
                     (uint)(AudioMixer.SampleRate * AudioMixer.BytesPerFrame));
-                _writer.SetInputMediaType(stream, pcm, null);
+                _writer!.SetInputMediaType(stream, pcm, null);
             }
 
             return stream;
@@ -162,25 +192,68 @@ internal sealed class MfH264Writer : IDisposable
 
     public void Finish()
     {
-        if (!_started) return;
-        _started = false;
         lock (_writeLock)
+        {
+            if (!_started || _writer == null) return;
+            _started = false;
             _writer.Finalize();
+        }
     }
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        try
+        lock (_writeLock)
         {
-            if (_started)
-                lock (_writeLock)
+            if (_disposed) return;
+            _disposed = true;
+            try
+            {
+                if (_started && _writer != null)
+                {
+                    _started = false;
                     _writer.Finalize();
+                }
+            }
+            catch { /* already finalized or failed */ }
+            _writer?.Dispose();
+            _writer = null;
+            if (_mfHeld)
+            {
+                _mfHeld = false;
+                MfSession.Exit();
+            }
         }
-        catch { /* already finalized or failed */ }
-        _writer?.Dispose();
-        MediaFactory.MFShutdown();
+    }
+
+    /// <summary>
+    /// MFStartup / MFShutdown süreç genelinde sayaçlıdır. Bir yazar kapanırken
+    /// sayacı sıfırlamak, aynı anda açılan ikinci yazarı MF_E_SHUTDOWN ile düşürür.
+    /// </summary>
+    private static class MfSession
+    {
+        private static readonly object Gate = new();
+        private static int _count;
+
+        public static void Enter()
+        {
+            lock (Gate)
+            {
+                if (_count == 0)
+                    MediaFactory.MFStartup();
+                _count++;
+            }
+        }
+
+        public static void Exit()
+        {
+            lock (Gate)
+            {
+                if (_count == 0) return;
+                _count--;
+                if (_count == 0)
+                    MediaFactory.MFShutdown();
+            }
+        }
     }
 
     private static ulong Pack(int hi, int lo) => ((ulong)(uint)hi << 32) | (uint)lo;

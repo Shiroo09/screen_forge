@@ -32,6 +32,8 @@ public sealed class VideoRecorder : IRecordingSession
     private long _graceUntilMs;
     private int _frameCount;
     private int _captureAttempts;
+    private EncoderChoice[] _plan = [];
+    private int _attempt;
     private int _targetIntervalMs;
     private bool _disposed;
     private bool _finished;
@@ -126,15 +128,11 @@ public sealed class VideoRecorder : IRecordingSession
     {
         if (!_running && _thread == null) return;
 
+        _stopRequested = true;
         if (_paused)
-        {
             _running = false;
-        }
         else
-        {
-            _stopRequested = true;
             _graceUntilMs = _stopwatch.ElapsedMilliseconds + 1000;
-        }
 
         _resumeSignal?.Set();
         var thread = _thread;
@@ -165,7 +163,11 @@ public sealed class VideoRecorder : IRecordingSession
         _resumeSignal?.Set();
         var thread = _thread;
         if (thread != null && thread.IsAlive && thread != Thread.CurrentThread)
-            thread.Join(TimeSpan.FromSeconds(6));
+        {
+            thread.Join(TimeSpan.FromSeconds(15));
+            if (thread.IsAlive)
+                return;
+        }
         _thread = null;
         _resumeSignal?.Dispose();
         _resumeSignal = null;
@@ -209,9 +211,8 @@ public sealed class VideoRecorder : IRecordingSession
         try
         {
             _source = (IFrameSource?)DxgiFrameSource.TryCreate(_region) ?? new GdiFrameSource(_region);
-            bool wantAudio = _mixer is { HasAudio: true };
             int bitrate = VideoBitrate.BitsPerSecond(_settings.Quality, _outWidth, _outHeight);
-            _writer = new MfH264Writer(_tempPath, _outWidth, _outHeight, Fps, bitrate, wantAudio);
+            OpenWriter(bitrate);
             pixels = new byte[_region.Width * _region.Height * 4];
             last = new byte[pixels.Length];
             if (_outWidth != _region.Width || _outHeight != _region.Height)
@@ -272,8 +273,8 @@ public sealed class VideoRecorder : IRecordingSession
                 }
 
                 long timestamp = Math.Max(0, (_stopwatch.ElapsedMilliseconds - pauseOffset) * 10_000);
-                _writer.WriteBgra(frame, timestamp);
-                Interlocked.Increment(ref _frameCount);
+                if (WriteVideoFrame(frame, timestamp))
+                    Interlocked.Increment(ref _frameCount);
 
                 nextFrameAt += _targetIntervalMs;
                 long drift = _stopwatch.ElapsedMilliseconds - nextFrameAt;
@@ -283,11 +284,13 @@ public sealed class VideoRecorder : IRecordingSession
 
             FlushAudio(pauseOffset);
         }
+        catch (Exception ex) when (_stopRequested && EncoderFallback.IsShutdown(ex))
+        {
+            // Durdurma yazarın kilidini alıp Finalize etti; uçuştaki örnek MF_E_SHUTDOWN döner.
+        }
         catch (Exception ex)
         {
-            Failure = ex.Message.Contains("H.264", StringComparison.OrdinalIgnoreCase)
-                ? new InvalidOperationException("Bu cihazda H.264 kodlayıcı yok (Media Foundation).")
-                : ex;
+            Failure = DescribeFailure(ex);
             _running = false;
         }
         finally
@@ -300,16 +303,138 @@ public sealed class VideoRecorder : IRecordingSession
         }
     }
 
+    private void OpenWriter(int bitrate)
+    {
+        bool wantAudio = _mixer is { HasAudio: true };
+        _plan = EncoderFallback.Plan(wantAudio);
+        Exception? last = null;
+        for (int i = 0; i < _plan.Length; i++)
+        {
+            if (TryCreateWriter(_plan[i], bitrate, out Exception? error))
+            {
+                _attempt = i;
+                return;
+            }
+
+            last = error;
+        }
+
+        throw last ?? new InvalidOperationException("Bu cihazda H.264 kodlayıcı yok (Media Foundation).");
+    }
+
+    private bool WriteVideoFrame(byte[] frame, long timestamp)
+    {
+        while (true)
+        {
+            try
+            {
+                return _writer!.WriteBgra(frame, timestamp);
+            }
+            catch (Exception) when (_frameCount < 3 && !_stopRequested)
+            {
+                // Filtre değil gövde: WriteBgra kilidi bırakıldıktan sonra yeni yazar açılsın.
+                if (!Recover(audioFailed: false))
+                    throw;
+            }
+        }
+    }
+
     private void FlushAudio(long pauseOffset)
     {
         if (_writer == null || _mixer == null) return;
         while (_mixer.TryDequeue(out var pcm))
         {
+            if (_writer is not { HasAudio: true })
+                continue;
+            WriteAudioPacket(pcm, pauseOffset);
+        }
+    }
+
+    private void WriteAudioPacket(byte[] pcm, long pauseOffset)
+    {
+        while (true)
+        {
+            if (_writer is not { HasAudio: true })
+                return;
+
             long timestamp = _audioBytes * 10_000_000L / (AudioMixer.SampleRate * AudioMixer.BytesPerFrame);
             timestamp = Math.Max(0, timestamp - pauseOffset * 10_000);
-            _writer.WriteAudio(pcm, timestamp);
-            _audioBytes += pcm.Length;
+            try
+            {
+                if (!_writer.WriteAudio(pcm, timestamp))
+                    return;
+                _audioBytes += pcm.Length;
+                return;
+            }
+            catch (Exception) when (_frameCount < 3 && !_stopRequested)
+            {
+                if (!Recover(audioFailed: true))
+                    throw;
+            }
         }
+    }
+
+    /// <summary>
+    /// Kodlayıcı ilk karelerde kapanırsa sıradaki seçeneği yeni bir dosyada dener.
+    /// Eski yazarı, yenisi MF'yi ayakta tutana kadar bırakır; aksi halde süreç sayacı
+    /// sıfırlanır ve yeni yazar da MF_E_SHUTDOWN alır.
+    /// </summary>
+    private bool Recover(bool audioFailed)
+    {
+        int bitrate = VideoBitrate.BitsPerSecond(_settings.Quality, _outWidth, _outHeight);
+        var old = _writer;
+        int next = EncoderFallback.Next(_plan, _attempt, audioFailed);
+        while (next >= 0)
+        {
+            var choice = _plan[next];
+            string path = Path.Combine(Path.GetTempPath(), $"screenforge-{Guid.NewGuid():N}.mp4");
+            if (TryCreateWriter(choice, bitrate, out _, path))
+            {
+                _attempt = next;
+                _audioBytes = 0;
+                try { old?.Dispose(); } catch { /* broken encoder */ }
+                TryDeleteTemp();
+                _tempPath = path;
+                return _writer != null;
+            }
+
+            next = EncoderFallback.Next(_plan, next, audioFailed);
+        }
+
+        try { old?.Dispose(); } catch { /* ignore */ }
+        _writer = null;
+        return false;
+    }
+
+    private bool TryCreateWriter(EncoderChoice choice, int bitrate, out Exception? error, string? path = null)
+    {
+        path ??= _tempPath;
+        try
+        {
+            _writer = new MfH264Writer(path, _outWidth, _outHeight, Fps, bitrate, choice.Audio, choice.Hardware);
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+            try { if (File.Exists(path)) File.Delete(path); } catch { /* locked */ }
+            return false;
+        }
+    }
+
+    private static Exception DescribeFailure(Exception ex)
+    {
+        if (ex.Message.Contains("H.264", StringComparison.OrdinalIgnoreCase))
+            return new InvalidOperationException("Bu cihazda H.264 kodlayıcı yok (Media Foundation).", ex);
+        if (EncoderFallback.IsShutdown(ex))
+        {
+            return new InvalidOperationException(
+                "Video kodlayıcı kapandı (MF_E_SHUTDOWN). Bu bilgisayarda hem donanım hem yazılım kodlayıcı kaydı sürdüremedi.",
+                ex);
+        }
+
+        return ex;
     }
 
     private void OverlayPointer(byte[] bgra)

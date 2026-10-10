@@ -22,8 +22,33 @@ public sealed class MfH264WriterTests
 
             using (var writer = new MfH264Writer(path, w, h, 10, 1_000_000))
             {
-                writer.WriteBgra(pixels, 0);
-                writer.WriteBgra(pixels, 1_000_000);
+                Assert.True(writer.WriteBgra(pixels, 0));
+                Assert.True(writer.WriteBgra(pixels, 1_000_000));
+                writer.Finish();
+            }
+
+            Assert.True(File.Exists(path));
+            Assert.True(new FileInfo(path).Length > 200);
+        }
+        finally
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void SoftwareEncoderWritesNonEmptyMp4()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"sf-h264-sw-{Guid.NewGuid():N}.mp4");
+        try
+        {
+            const int w = 320, h = 240;
+            var pixels = new byte[w * h * 4];
+            using (var writer = new MfH264Writer(path, w, h, 10, 1_000_000, hardware: false))
+            {
+                Assert.True(writer.WriteBgra(pixels, 0));
+                Assert.True(writer.WriteBgra(pixels, 1_000_000));
                 writer.Finish();
             }
 
