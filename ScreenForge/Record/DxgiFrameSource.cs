@@ -19,6 +19,9 @@ internal sealed class DxgiFrameSource : IFrameSource
     private bool _released = true;
     private bool _disposed;
 
+    /// <summary>Yeni masaüstü görüntüsü için beklenecek süre. Kayıt döngüsü 1 ms kullanır; uzun bekleme kare aralığını kaçırır.</summary>
+    public int AcquireTimeoutMs { get; set; } = 40;
+
     private DxgiFrameSource(
         ID3D11Device device,
         ID3D11DeviceContext context,
@@ -121,7 +124,8 @@ internal sealed class DxgiFrameSource : IFrameSource
             _released = true;
         }
 
-        Result hr = _duplication.AcquireNextFrame(40, out OutduplFrameInfo info, out IDXGIResource? resource);
+        uint timeout = (uint)Math.Clamp(AcquireTimeoutMs, 0, 1000);
+        Result hr = _duplication.AcquireNextFrame(timeout, out OutduplFrameInfo info, out IDXGIResource? resource);
         if (hr.Failure || resource is null)
             return false;
 

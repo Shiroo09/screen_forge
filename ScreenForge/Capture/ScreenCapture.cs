@@ -74,6 +74,17 @@ public static class ScreenCapture
         return bmp;
     }
 
+    internal static bool TryGetCursorPosition(out int x, out int y)
+    {
+        x = y = 0;
+        var ci = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
+        if (!GetCursorInfo(ref ci) || ci.flags != CURSOR_SHOWING)
+            return false;
+        x = ci.ptScreenPos.x;
+        y = ci.ptScreenPos.y;
+        return true;
+    }
+
     internal static void DrawCursor(Graphics g, Rectangle bounds)
     {
         var ci = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };

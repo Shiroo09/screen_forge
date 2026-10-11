@@ -1,24 +1,28 @@
 using System.Collections.Concurrent;
-using System.IO;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
-using NAudio.Wave.SampleProviders;
 
 namespace ScreenForge.Record;
 
 internal sealed class AudioMixer : IDisposable
 {
-    public const int SampleRate = 48000;
     public const int Channels = 2;
     public const int BytesPerFrame = 4;
 
+    /// <summary>AAC'ye yazılan hız. 44.1 veya 48 kHz ise aygıtın kendi hızı, çevirme yok.</summary>
+    public int SampleRate { get; private set; } = 48000;
+
     private readonly ConcurrentQueue<byte[]> _pcm = new();
     private readonly object _gate = new();
+    private SystemLoopback? _sys;
     private WasapiLoopbackCapture? _loop;
     private WasapiCapture? _mic;
     private MMDevice? _micDevice;
     private WaveFormat? _loopFormat;
     private WaveFormat? _micFormat;
+    private PcmPump? _sysPump;
+    private PcmPump? _micPump;
+    private bool _rateLocked;
     private float[] _sysRemain = [];
     private float[] _micRemain = [];
     private volatile float _sysPeak;
@@ -39,7 +43,7 @@ internal sealed class AudioMixer : IDisposable
 
     public bool HasSystem { get; }
     public bool HasMic { get; }
-    public bool HasAudio => _loop != null || _mic != null;
+    public bool HasAudio => _sys != null || _loop != null || _mic != null;
     public float SystemPeak => _sysPeak;
     public float MicPeak => _micPeak;
 
@@ -73,21 +77,50 @@ internal sealed class AudioMixer : IDisposable
             DrainMix(force: true);
     }
 
+    /// <summary>Kayıt başlayınca hız kilitlenir. Sonradan açılan mikrofon bu hıza çekilir.</summary>
+    public void LockSampleRate()
+    {
+        lock (_gate)
+        {
+            EnsurePumps();
+            _rateLocked = true;
+        }
+    }
+
     private void StartLoopback()
     {
         try
         {
-            _loop = new WasapiLoopbackCapture();
-            _loopFormat = _loop.WaveFormat;
-            var format = _loopFormat;
-            _loop.DataAvailable += (_, e) => OnData(e, isMic: false, format);
-            _loop.StartRecording();
+            // Kulaklık (Bluetooth) uç noktası döngüsü paketi böler, ses titrer.
+            // Uygulama karışımı kulaklığa inmeden alınır.
+            var sys = new SystemLoopback();
+            _sys = sys;
+            _loopFormat = sys.WaveFormat;
+            EnsurePumps();
+            sys.DataAvailable += (_, e) => OnData(e, isMic: false);
+            sys.Start();
         }
         catch
         {
-            _loop?.Dispose();
-            _loop = null;
+            _sys?.Dispose();
+            _sys = null;
             _loopFormat = null;
+            _sysPump = null;
+            try
+            {
+                _loop = new WasapiLoopbackCapture();
+                _loopFormat = _loop.WaveFormat;
+                EnsurePumps();
+                _loop.DataAvailable += (_, e) => OnData(e, isMic: false);
+                _loop.StartRecording();
+            }
+            catch
+            {
+                _loop?.Dispose();
+                _loop = null;
+                _loopFormat = null;
+                _sysPump = null;
+            }
         }
     }
 
@@ -110,8 +143,8 @@ internal sealed class AudioMixer : IDisposable
             _micDevice = device;
             _mic = new WasapiCapture(device, true, 50);
             _micFormat = _mic.WaveFormat;
-            var format = _micFormat;
-            _mic.DataAvailable += (_, e) => OnData(e, isMic: true, format);
+            EnsurePumps();
+            _mic.DataAvailable += (_, e) => OnData(e, isMic: true);
             _mic.StartRecording();
         }
         catch
@@ -120,25 +153,57 @@ internal sealed class AudioMixer : IDisposable
         }
     }
 
-    private void OnData(WaveInEventArgs e, bool isMic, WaveFormat? format)
+    private void EnsurePumps()
     {
-        if (_disposed || e.BytesRecorded <= 0 || format == null)
+        if (!_rateLocked)
+            SampleRate = ChooseRate();
+        if (_loopFormat != null && (_sysPump == null || _sysPump.Target != SampleRate))
+            _sysPump = new PcmPump(_loopFormat, SampleRate);
+        if (_micFormat != null && (_micPump == null || _micPump.Target != SampleRate))
+            _micPump = new PcmPump(_micFormat, SampleRate);
+    }
+
+    private int ChooseRate()
+    {
+        int loop = _loopFormat?.SampleRate ?? 0;
+        int mic = _micFormat?.SampleRate ?? 0;
+        // Sistem sesi kaydın duyulan kısmı. Onun hızı 44.1 veya 48 ise olduğu gibi yaz.
+        if (loop is 44100 or 48000)
+            return loop;
+        if (mic is 44100 or 48000)
+            return mic;
+        return 48000;
+    }
+
+    private void OnData(WaveInEventArgs e, bool isMic)
+    {
+        if (_disposed || e.BytesRecorded <= 0)
             return;
 
-        var samples = ToStereo48k(e.Buffer, e.BytesRecorded, format, out float peak);
-        if (samples.Length == 0)
+        var pump = isMic ? _micPump : _sysPump;
+        if (pump == null)
             return;
 
-        if (isMic) _micPeak = peak;
-        else _sysPeak = peak;
+        float[] chunk;
+        try
+        {
+            chunk = pump.Push(e.Buffer, e.BytesRecorded, out float peak);
+            if (isMic) _micPeak = peak;
+            else _sysPeak = peak;
+        }
+        catch
+        {
+            return;
+        }
 
-        if (_paused || !_enqueue)
+        // Kayıt dışındaki sesi biriktirme. Sayaç 0'a yığılır ve video uzar.
+        if (_paused || !_enqueue || chunk.Length == 0)
             return;
 
         lock (_gate)
         {
-            if (isMic) _micRemain = Concat(_micRemain, samples);
-            else _sysRemain = Concat(_sysRemain, samples);
+            if (isMic) _micRemain = Concat(_micRemain, chunk);
+            else _sysRemain = Concat(_sysRemain, chunk);
             DrainMix(force: false);
         }
     }
@@ -147,14 +212,18 @@ internal sealed class AudioMixer : IDisposable
     {
         int sysFrames = _sysRemain.Length / Channels;
         int micFrames = _micRemain.Length / Channels;
-        bool both = _loop != null && _mic != null;
-        int frames = both ? Math.Max(sysFrames, micFrames) : (_loop != null ? sysFrames : micFrames);
+        bool hasLoop = _sys != null || _loop != null;
+        // Sistem sesi ana saat. Mikrofon gerideyse sisteme boşluk koyma.
+        int frames = hasLoop ? sysFrames : micFrames;
 
-        const int minFrames = SampleRate / 50;
-        if (!force && frames < minFrames)
+        // AAC çerçevesi 1024 örnek. Yarım paketler kodlayıcıda titreme ve tekrar yapar.
+        const int quantum = 1024;
+        if (!force && frames < quantum)
             return;
         if (frames <= 0)
             return;
+        if (!force)
+            frames = frames / quantum * quantum;
 
         var pcm = new byte[frames * BytesPerFrame];
         for (int i = 0; i < frames; i++)
@@ -197,54 +266,6 @@ internal sealed class AudioMixer : IDisposable
         return n;
     }
 
-    private static float[] ToStereo48k(byte[] buffer, int bytes, WaveFormat format, out float peak)
-    {
-        peak = 0;
-        float[] interleaved;
-        try
-        {
-            using var ms = new MemoryStream(buffer, 0, bytes, writable: false);
-            using var raw = new RawSourceWaveStream(ms, format);
-            ISampleProvider samples = raw.ToSampleProvider();
-            if (samples.WaveFormat.Channels == 1)
-                samples = new MonoToStereoSampleProvider(samples);
-
-            int srcRate = samples.WaveFormat.SampleRate;
-            int srcCh = samples.WaveFormat.Channels;
-            var scratch = new float[Math.Max(srcCh, bytes)];
-            int n = samples.Read(scratch, 0, scratch.Length);
-            if (n <= 0) return [];
-
-            int srcFrames = n / srcCh;
-            interleaved = new float[srcFrames * 2];
-            for (int i = 0; i < srcFrames; i++)
-            {
-                float l = scratch[i * srcCh];
-                float r = srcCh > 1 ? scratch[i * srcCh + 1] : l;
-                interleaved[i * 2] = l;
-                interleaved[i * 2 + 1] = r;
-                peak = Math.Max(peak, Math.Max(Math.Abs(l), Math.Abs(r)));
-            }
-
-            if (srcRate == SampleRate)
-                return interleaved;
-
-            int dstFrames = Math.Max(1, (int)((long)srcFrames * SampleRate / srcRate));
-            var dst = new float[dstFrames * 2];
-            for (int i = 0; i < dstFrames; i++)
-            {
-                int i0 = Math.Min(srcFrames - 1, (int)(i * (srcRate / (double)SampleRate)));
-                dst[i * 2] = interleaved[i0 * 2];
-                dst[i * 2 + 1] = interleaved[i0 * 2 + 1];
-            }
-            return dst;
-        }
-        catch
-        {
-            return [];
-        }
-    }
-
     private void StopMic()
     {
         try { _mic?.StopRecording(); } catch { /* ignore */ }
@@ -253,12 +274,16 @@ internal sealed class AudioMixer : IDisposable
         _micDevice?.Dispose();
         _micDevice = null;
         _micFormat = null;
+        _micPump = null;
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        try { _sys?.Stop(); } catch { /* ignore */ }
+        _sys?.Dispose();
+        _sys = null;
         try { _loop?.StopRecording(); } catch { /* ignore */ }
         _loop?.Dispose();
         _loop = null;

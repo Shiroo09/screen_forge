@@ -38,6 +38,8 @@ public sealed class VideoRecorder : IRecordingSession
     private bool _disposed;
     private bool _finished;
     private long _audioBytes;
+    private long _audioTimestamp;
+    private int _audioRate = 48000;
     private int _clickX, _clickY;
     private int _clickArgb;
     private long _clickUntil;
@@ -181,6 +183,7 @@ public sealed class VideoRecorder : IRecordingSession
         _frameCount = 0;
         _captureAttempts = 0;
         _audioBytes = 0;
+        _audioTimestamp = 0;
         _stopRequested = false;
 
         Start();
@@ -219,7 +222,15 @@ public sealed class VideoRecorder : IRecordingSession
                 scaled = new byte[_outWidth * _outHeight * 4];
             using var timerRes = new TimerResolution(1);
 
-            long nextFrameAt = 0;
+            long intervalMs = Math.Max(1, (int)Math.Round(1000.0 / Fps));
+            long lastSlot = -1;
+            bool haveDesktop = false;
+            bool decorate = _settings.CaptureCursor || _settings.HighlightClicks;
+            byte[]? composed = decorate ? new byte[pixels.Length] : null;
+            long overlayStamp = long.MinValue;
+            if (_source is DxgiFrameSource dxgi)
+                dxgi.AcquireTimeoutMs = 1;
+
             while (_running)
             {
                 if (_stopRequested && _stopwatch.ElapsedMilliseconds >= _graceUntilMs)
@@ -234,17 +245,18 @@ public sealed class VideoRecorder : IRecordingSession
                         pauseOffset += _stopwatch.ElapsedMilliseconds - pauseStarted;
                         pauseStarted = 0;
                     }
-                    nextFrameAt = _stopwatch.ElapsedMilliseconds;
                     continue;
                 }
 
-                FlushAudio(pauseOffset);
-
-                long now = _stopwatch.ElapsedMilliseconds;
-                long wait = nextFrameAt - now;
-                if (wait > 1)
+                long nowMs = Math.Max(0, _stopwatch.ElapsedMilliseconds - pauseOffset);
+                long slot = nowMs / intervalMs;
+                if (slot <= lastSlot)
                 {
-                    Thread.Sleep((int)Math.Min(wait, 50));
+                    FlushAudio(nowMs);
+                    int waitMs = (int)Math.Min(intervalMs, (lastSlot + 1) * intervalMs - nowMs);
+                    if (waitMs < 1)
+                        waitMs = 1;
+                    Thread.Sleep(waitMs);
                     continue;
                 }
 
@@ -252,37 +264,57 @@ public sealed class VideoRecorder : IRecordingSession
                 _captureAttempts++;
                 if (got)
                 {
-                    OverlayPointer(pixels);
                     Buffer.BlockCopy(pixels, 0, last, 0, pixels.Length);
+                    haveDesktop = true;
                 }
-                else if (_frameCount == 0)
+                else if (!haveDesktop)
                 {
-                    nextFrameAt += _targetIntervalMs;
+                    Thread.Sleep(5);
                     continue;
+                }
+
+                bool rebuilt = true;
+                if (!decorate)
+                {
+                    if (!got)
+                        Buffer.BlockCopy(last, 0, pixels, 0, pixels.Length);
                 }
                 else
                 {
-                    Buffer.BlockCopy(last, 0, pixels, 0, pixels.Length);
+                    long stamp = PointerStamp();
+                    if (got || stamp != overlayStamp)
+                    {
+                        if (!got)
+                            Buffer.BlockCopy(last, 0, pixels, 0, pixels.Length);
+                        OverlayPointer(pixels);
+                        Buffer.BlockCopy(pixels, 0, composed!, 0, pixels.Length);
+                        overlayStamp = stamp;
+                    }
+                    else
+                    {
+                        Buffer.BlockCopy(composed!, 0, pixels, 0, pixels.Length);
+                        rebuilt = false;
+                    }
                 }
 
                 byte[] frame = pixels;
                 if (scaled != null)
                 {
-                    ScaleNearest(pixels, _region.Width, _region.Height, scaled, _outWidth, _outHeight);
+                    if (rebuilt)
+                        ScaleNearest(pixels, _region.Width, _region.Height, scaled, _outWidth, _outHeight);
                     frame = scaled;
                 }
 
-                long timestamp = Math.Max(0, (_stopwatch.ElapsedMilliseconds - pauseOffset) * 10_000);
-                if (WriteVideoFrame(frame, timestamp))
+                long timestamp = (lastSlot + 1) * intervalMs * 10_000L;
+                long duration = (slot - lastSlot) * intervalMs * 10_000L;
+                if (WriteVideoFrame(frame, timestamp, duration))
                     Interlocked.Increment(ref _frameCount);
-
-                nextFrameAt += _targetIntervalMs;
-                long drift = _stopwatch.ElapsedMilliseconds - nextFrameAt;
-                if (drift > _targetIntervalMs * 3)
-                    nextFrameAt = _stopwatch.ElapsedMilliseconds + _targetIntervalMs;
+                lastSlot = slot;
+                FlushAudio(nowMs);
             }
 
-            FlushAudio(pauseOffset);
+            long endMs = Math.Max(0, _stopwatch.ElapsedMilliseconds - pauseOffset);
+            FlushAudio(endMs);
         }
         catch (Exception ex) when (_stopRequested && EncoderFallback.IsShutdown(ex))
         {
@@ -296,7 +328,12 @@ public sealed class VideoRecorder : IRecordingSession
         finally
         {
             try { _mixer?.FlushRemainder(); } catch { /* ignore */ }
-            try { FlushAudio(0); } catch { /* ignore */ }
+            try
+            {
+                long endMs = Math.Max(0, _stopwatch.ElapsedMilliseconds - pauseOffset);
+                FlushAudio(endMs);
+            }
+            catch { /* ignore */ }
             FinishWriter();
             _source?.Dispose();
             _source = null;
@@ -322,13 +359,13 @@ public sealed class VideoRecorder : IRecordingSession
         throw last ?? new InvalidOperationException("Bu cihazda H.264 kodlayıcı yok (Media Foundation).");
     }
 
-    private bool WriteVideoFrame(byte[] frame, long timestamp)
+    private bool WriteVideoFrame(byte[] frame, long timestamp, long duration)
     {
         while (true)
         {
             try
             {
-                return _writer!.WriteBgra(frame, timestamp);
+                return _writer!.WriteBgra(frame, timestamp, duration);
             }
             catch (Exception) when (_frameCount < 3 && !_stopRequested)
             {
@@ -339,30 +376,41 @@ public sealed class VideoRecorder : IRecordingSession
         }
     }
 
-    private void FlushAudio(long pauseOffset)
+    private void FlushAudio(long elapsedMs)
     {
         if (_writer == null || _mixer == null) return;
+        // Paketi kesmek AAC çerçevesini böler ve ses robotikleşir.
+        // Yalnızca saat iki saniyeden fazla kaçarsa bütün paketler atılır.
+        long limit = Math.Max(0, elapsedMs) * 10_000L + 20_000_000L;
         while (_mixer.TryDequeue(out var pcm))
         {
             if (_writer is not { HasAudio: true })
                 continue;
-            WriteAudioPacket(pcm, pauseOffset);
+            if (_audioTimestamp > limit)
+            {
+                while (_mixer.TryDequeue(out _)) { }
+                return;
+            }
+
+            WriteAudioPacket(pcm);
         }
     }
 
-    private void WriteAudioPacket(byte[] pcm, long pauseOffset)
+    private void WriteAudioPacket(byte[] pcm)
     {
         while (true)
         {
             if (_writer is not { HasAudio: true })
                 return;
 
-            long timestamp = _audioBytes * 10_000_000L / (AudioMixer.SampleRate * AudioMixer.BytesPerFrame);
-            timestamp = Math.Max(0, timestamp - pauseOffset * 10_000);
+            long duration = pcm.Length * 10_000_000L / (_audioRate * AudioMixer.BytesPerFrame);
+            if (duration < 1)
+                duration = 1;
             try
             {
-                if (!_writer.WriteAudio(pcm, timestamp))
+                if (!_writer.WriteAudio(pcm, _audioTimestamp))
                     return;
+                _audioTimestamp += duration;
                 _audioBytes += pcm.Length;
                 return;
             }
@@ -372,6 +420,21 @@ public sealed class VideoRecorder : IRecordingSession
                     throw;
             }
         }
+    }
+
+    private long PointerStamp()
+    {
+        long stamp = 0;
+        if (_settings.CaptureCursor && ScreenCapture.TryGetCursorPosition(out int x, out int y))
+        {
+            stamp = ((long)(uint)x << 32) | (uint)y;
+            stamp |= (Environment.TickCount64 / 100) << 48;
+            stamp |= 1L << 62;
+        }
+
+        if (_settings.HighlightClicks && Environment.TickCount64 < _clickUntil)
+            stamp ^= ((long)(uint)_clickX << 16) ^ (uint)_clickY ^ (uint)_clickArgb ^ (1L << 61);
+        return stamp;
     }
 
     /// <summary>
@@ -392,6 +455,7 @@ public sealed class VideoRecorder : IRecordingSession
             {
                 _attempt = next;
                 _audioBytes = 0;
+                _audioTimestamp = 0;
                 try { old?.Dispose(); } catch { /* broken encoder */ }
                 TryDeleteTemp();
                 _tempPath = path;
@@ -411,7 +475,9 @@ public sealed class VideoRecorder : IRecordingSession
         path ??= _tempPath;
         try
         {
-            _writer = new MfH264Writer(path, _outWidth, _outHeight, Fps, bitrate, choice.Audio, choice.Hardware);
+            _mixer?.LockSampleRate();
+            _audioRate = _mixer?.SampleRate ?? 48000;
+            _writer = new MfH264Writer(path, _outWidth, _outHeight, Fps, bitrate, choice.Audio, choice.Hardware, _audioRate);
             error = null;
             return true;
         }

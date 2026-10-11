@@ -12,16 +12,18 @@ internal sealed class MfH264Writer : IDisposable
     private readonly int _width;
     private readonly int _height;
     private readonly long _frameDuration;
+    private readonly int _audioRate;
     private bool _started;
     private bool _disposed;
     private bool _mfHeld;
 
-    public MfH264Writer(string path, int width, int height, int fps, int bitrate, bool audio = false, bool hardware = true)
+    public MfH264Writer(string path, int width, int height, int fps, int bitrate, bool audio = false, bool hardware = true, int audioSampleRate = 48000)
     {
         _width = width;
         _height = height;
         fps = Math.Max(1, fps);
         _frameDuration = 10_000_000L / fps;
+        _audioRate = audioSampleRate is 44100 or 48000 ? audioSampleRate : 48000;
 
         MfSession.Enter();
         _mfHeld = true;
@@ -34,7 +36,6 @@ internal sealed class MfH264Writer : IDisposable
             // sink ilk örnekte kendini Shutdown eder (MF_E_SHUTDOWN).
             attrs.Set(SinkWriterAttributeKeys.ReadwriteD3DOptional, true);
             attrs.Set(SinkWriterAttributeKeys.DisableThrottling, true);
-            attrs.Set(SinkWriterAttributeKeys.LowLatency, true);
 
             _writer = MediaFactory.MFCreateSinkWriterFromURL(path, null, attrs);
         }
@@ -91,7 +92,7 @@ internal sealed class MfH264Writer : IDisposable
     public bool HasAudio => _audioStream >= 0;
 
     /// <summary>Yazar kapanmışsa kareyi yutar ve false döner. Çağıran durdurma yarışında bunu hata saymasın.</summary>
-    public bool WriteBgra(byte[] bgra, long timestampHundredNanos)
+    public bool WriteBgra(byte[] bgra, long timestampHundredNanos, long durationHundredNanos = 0)
     {
         int stride = _width * 4;
         int byteCount = stride * _height;
@@ -119,7 +120,7 @@ internal sealed class MfH264Writer : IDisposable
             using var sample = MediaFactory.MFCreateSample();
             sample.AddBuffer(buffer);
             sample.SampleTime = timestampHundredNanos;
-            sample.SampleDuration = _frameDuration;
+            sample.SampleDuration = durationHundredNanos > 0 ? durationHundredNanos : _frameDuration;
             _writer.WriteSample(_streamIndex, sample);
             return true;
         }
@@ -139,7 +140,7 @@ internal sealed class MfH264Writer : IDisposable
             finally { buffer.Unlock(); }
             buffer.CurrentLength = pcm.Length;
 
-            long duration = pcm.Length * 10_000_000L / (AudioMixer.SampleRate * AudioMixer.BytesPerFrame);
+            long duration = pcm.Length * 10_000_000L / (_audioRate * AudioMixer.BytesPerFrame);
             using var sample = MediaFactory.MFCreateSample();
             sample.AddBuffer(buffer);
             sample.SampleTime = timestampHundredNanos;
@@ -159,7 +160,7 @@ internal sealed class MfH264Writer : IDisposable
                 aac.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Audio);
                 aac.Set(MediaTypeAttributeKeys.Subtype, AudioFormatGuids.Aac);
                 aac.Set(MediaTypeAttributeKeys.AudioNumChannels, 2u);
-                aac.Set(MediaTypeAttributeKeys.AudioSamplesPerSecond, (uint)AudioMixer.SampleRate);
+                aac.Set(MediaTypeAttributeKeys.AudioSamplesPerSecond, (uint)_audioRate);
                 aac.Set(MediaTypeAttributeKeys.AudioBitsPerSample, 16u);
                 aac.Set(MediaTypeAttributeKeys.AudioAvgBytesPerSecond, 16000u);
                 aac.Set(MediaTypeAttributeKeys.AacPayloadType, 0u);
@@ -174,11 +175,11 @@ internal sealed class MfH264Writer : IDisposable
                 pcm.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Audio);
                 pcm.Set(MediaTypeAttributeKeys.Subtype, AudioFormatGuids.Pcm);
                 pcm.Set(MediaTypeAttributeKeys.AudioNumChannels, 2u);
-                pcm.Set(MediaTypeAttributeKeys.AudioSamplesPerSecond, (uint)AudioMixer.SampleRate);
+                pcm.Set(MediaTypeAttributeKeys.AudioSamplesPerSecond, (uint)_audioRate);
                 pcm.Set(MediaTypeAttributeKeys.AudioBitsPerSample, 16u);
                 pcm.Set(MediaTypeAttributeKeys.AudioBlockAlignment, (uint)AudioMixer.BytesPerFrame);
                 pcm.Set(MediaTypeAttributeKeys.AudioAvgBytesPerSecond,
-                    (uint)(AudioMixer.SampleRate * AudioMixer.BytesPerFrame));
+                    (uint)(_audioRate * AudioMixer.BytesPerFrame));
                 _writer!.SetInputMediaType(stream, pcm, null);
             }
 
