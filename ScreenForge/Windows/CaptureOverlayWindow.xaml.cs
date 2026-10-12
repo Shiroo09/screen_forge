@@ -34,19 +34,26 @@ public partial class CaptureOverlayWindow : Window
     [DllImport("user32.dll")] private static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
 
     // Pencere algılama (bölge seçimi öncesi hover)
-    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out WinRect lpRect);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern IntPtr GetShellWindow();
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
-    [DllImport("user32.dll")] private static extern int GetWindowTextLength(IntPtr hWnd);
+    // Başlık için WM_GETTEXT yok: hedef pencere kilitliyse SendMessage UI thread'i sonsuza dek bekletir.
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int InternalGetWindowText(IntPtr hWnd, char[] lpString, int nMaxCount);
+    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool IsHungAppWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     // DWM extended frame bounds — gölge hariç görünür çerçeve (Windows 10+)
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out WinRect pvAttribute, int cbAttribute);
     private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
     private const uint GA_ROOT = 2;
-    private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     private struct WinRect { public int Left, Top, Right, Bottom; }
 
@@ -132,6 +139,9 @@ public partial class CaptureOverlayWindow : Window
     public CaptureOverlayWindow(Bitmap screenshot, Rectangle virtualBounds, AppSettings settings, CaptureMode mode = CaptureMode.Region)
     {
         InitializeComponent();
+        // Dokunmatik basılı tutma, sürüklemeyi sağ tık sanıp seçimi yutabiliyor.
+        Stylus.SetIsPressAndHoldEnabled(this, false);
+        Stylus.SetIsFlicksEnabled(this, false);
         _screenshot = screenshot;
         _virtualBounds = virtualBounds;
         _settings = settings;
@@ -306,34 +316,57 @@ public partial class CaptureOverlayWindow : Window
         if (_mode != CaptureMode.Region) return;
         var hwndSelf = new WindowInteropHelper(this).Handle;
         var hwndShell = GetShellWindow();
-        var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
+        var hwnd = _foregroundWindowAtOpen;
         var list = new List<(IntPtr, WpfRect)>();
 
-        EnumWindows((hwnd, _) =>
+        // EnumWindows içinden GetWindowText / DWM çağırmak, hedef (veya pencere
+        // yöneticisi) meşgulken UI thread'i kilitliyordu: artı imleç kalıyor, seçim gelmiyordu.
+        if (hwnd != IntPtr.Zero && hwnd != hwndSelf && hwnd != hwndShell
+            && IsWindow(hwnd) && IsWindowVisible(hwnd) && !IsIconic(hwnd)
+            && HasWindowTitle(hwnd) && TryGetWindowDipRect(hwnd, out var dip))
         {
-            if (_foregroundWindowAtOpen == IntPtr.Zero || hwnd != _foregroundWindowAtOpen) return true;
-            if (!IsWindowVisible(hwnd)) return true;
-            if (hwnd == hwndSelf || hwnd == hwndShell) return true;
-            if (IsIconic(hwnd)) return true;
-            if (GetWindowTextLength(hwnd) == 0) return true;
-            // DWM extended frame = gölge hariç görünür kenar (DWMWA_EXTENDED_FRAME_BOUNDS)
-            // DWM başarısız olursa GetWindowRect ile fall-back
-            WinRect r;
-            if (DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, out r, Marshal.SizeOf<WinRect>()) != 0)
-            {
-                if (!GetWindowRect(hwnd, out r)) return true;
-            }
-            int pw = r.Right - r.Left, ph = r.Bottom - r.Top;
-            if (pw <= 0 || ph <= 0) return true;
-            double dipX = (r.Left - _virtualBounds.X) / dpi.DpiScaleX;
-            double dipY = (r.Top - _virtualBounds.Y) / dpi.DpiScaleY;
-            double dipW = pw / dpi.DpiScaleX;
-            double dipH = ph / dpi.DpiScaleY;
-            list.Add((hwnd, new WpfRect(dipX, dipY, dipW, dipH)));
-            return true;
-        }, IntPtr.Zero);
+            list.Add((hwnd, dip));
+        }
 
         _visibleWindows = list;
+    }
+
+    /// <summary>Pencere başlığı var mı? Hedef thread'e mesaj atmaz, bu yüzden kilitli pencerede takılmaz.</summary>
+    private static bool HasWindowTitle(IntPtr hwnd)
+    {
+        var buf = new char[8];
+        return InternalGetWindowText(hwnd, buf, buf.Length) > 0;
+    }
+
+    private bool TryGetWindowDipRect(IntPtr hwnd, out WpfRect dip)
+    {
+        dip = WpfRect.Empty;
+        if (!TryGetWindowBounds(hwnd, out var r))
+            return false;
+
+        int pw = r.Right - r.Left, ph = r.Bottom - r.Top;
+        if (pw <= 0 || ph <= 0) return false;
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        double sx = dpi.DpiScaleX <= 0 ? 1 : dpi.DpiScaleX;
+        double sy = dpi.DpiScaleY <= 0 ? 1 : dpi.DpiScaleY;
+        dip = new WpfRect(
+            (r.Left - _virtualBounds.X) / sx,
+            (r.Top - _virtualBounds.Y) / sy,
+            pw / sx,
+            ph / sy);
+        return true;
+    }
+
+    /// <summary>Gölgesiz çerçeve. Yanıt vermeyen pencerede DWM'e hiç girilmez.</summary>
+    private static bool TryGetWindowBounds(IntPtr hwnd, out WinRect rect)
+    {
+        if (!IsHungAppWindow(hwnd)
+            && DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, out rect, Marshal.SizeOf<WinRect>()) == 0
+            && rect.Right > rect.Left && rect.Bottom > rect.Top)
+            return true;
+
+        return GetWindowRect(hwnd, out rect);
     }
 
     private void UpdateWindowHover(WpfPoint pos)
@@ -377,20 +410,58 @@ public partial class CaptureOverlayWindow : Window
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
         var hwnd = new WindowInteropHelper(this).Handle;
+        HwndSource.FromHwnd(hwnd)?.AddHook(OverlayInputHook);
         MoveWindow(hwnd, _virtualBounds.X, _virtualBounds.Y, _virtualBounds.Width, _virtualBounds.Height, true);
+    }
+
+    /// <summary>
+    /// Tepsi / ertelenmiş kısayolda pencere öne gelmezse Windows tıklamayı yutup yalnızca
+    /// odak ister. Artı imleç durur, sürükleme hiç başlamaz. MA_ACTIVATE mesajı yer.
+    /// </summary>
+    private IntPtr OverlayInputHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        const int WM_MOUSEACTIVATE = 0x0021;
+        const int MA_ACTIVATE = 1;
+        if (msg != WM_MOUSEACTIVATE) return IntPtr.Zero;
+        handled = true;
+        return new IntPtr(MA_ACTIVATE);
+    }
+
+    private void EnsureForeground()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        IntPtr fore = GetForegroundWindow();
+        uint foreThread = fore == IntPtr.Zero ? 0 : GetWindowThreadProcessId(fore, out _);
+        uint thisThread = GetCurrentThreadId();
+        bool attached = false;
+        if (foreThread != 0 && foreThread != thisThread)
+            attached = AttachThreadInput(foreThread, thisThread, true);
+        try
+        {
+            if (hwnd != IntPtr.Zero)
+            {
+                BringWindowToTop(hwnd);
+                SetForegroundWindow(hwnd);
+            }
+            Activate();
+            Focus();
+        }
+        finally
+        {
+            if (attached)
+                AttachThreadInput(foreThread, thisThread, false);
+        }
     }
 
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         ScreenImage.Width = ActualWidth;
         ScreenImage.Height = ActualHeight;
-        ScreenImage.CacheMode = new BitmapCache { RenderAtScale = 1, SnapsToDevicePixels = true };
         CachePixelScale();
         UpdateDimRects(WpfRect.Empty);
         BuildModeBar();
         ApplyMode();
-        Activate();
-        Focus();
+        EnsureForeground();
         BuildWindowList();
         // Çeviri ısınması seçim sırasında UI'yi kasmaması için edit fazına bırakıldı.
     }
@@ -591,6 +662,18 @@ public partial class CaptureOverlayWindow : Window
 
         if (_windowHoverActive && _mode == CaptureMode.Region && _phase == Phase.Select && !_dragging)
             UpdateWindowHover(pos);
+
+        // MouseDown yutulduysa (odak çalma, dokunmatik) basılı sürükleme yine seçim başlatsın.
+        if (!_dragging && _phase == Phase.Select && _mode == CaptureMode.Region
+            && e.LeftButton == MouseButtonState.Pressed
+            && !_translateViewOpen && !_suspendCaptureInput
+            && !_selMovePending && !_selMoving
+            && !IsOverlayChrome(e.OriginalSource as DependencyObject))
+        {
+            _dragging = true;
+            _start = pos;
+            try { if (!IsMouseCaptured) CaptureMouse(); } catch { /* ignore */ }
+        }
 
         if (_selResizing)
         {
