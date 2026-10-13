@@ -1,9 +1,11 @@
 using System.IO;
 using System.Threading;
 using System.Windows;
+using ScreenForge.Background;
 using ScreenForge.Hotkeys;
 using ScreenForge.Settings;
 using ScreenForge.Tray;
+using ScreenForge.Windows;
 using Velopack;
 
 namespace ScreenForge;
@@ -35,9 +37,16 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         // ---- Tek örnek kontrolü ----
+        var editPath = BackgroundFiles.ReadArgument(e.Args);
         _instanceMutex = new Mutex(true, MutexName, out _ownsInstanceMutex);
         if (!_ownsInstanceMutex)
         {
+            if (editPath != null && BackgroundEditBridge.TrySend(editPath))
+            {
+                Shutdown();
+                return;
+            }
+
             MessageBox.Show("ScreenForge zaten çalışıyor. Sistem tepsisini kontrol edin.",
                 "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown();
@@ -60,6 +69,7 @@ public partial class App : Application
         _tray.ColorPickerRequested += OnColorPicker;
         _tray.TrayUploadRequested += OnTrayUpload;
         _tray.QuickTranslateRequested += OnQuickTranslate;
+        _tray.BackgroundEditRequested += OnBackgroundEditPick;
         _tray.SettingsRequested += OnSettings;
         _tray.AboutRequested += OnAbout;
         _tray.ExitRequested += OnExit;
@@ -85,6 +95,35 @@ public partial class App : Application
         _tray.GetAvailableUpdate = () => Updates.AutoUpdateService.AvailableVersion;
         _tray.UpdateRequested += () => _ = Updates.AutoUpdateService.ApplyAvailableAsync();
         Updates.AutoUpdateService.CheckOnStartup(() => Dispatcher.Invoke(Shutdown));
+
+        ShellBackgroundMenu.Register();
+        BackgroundEditBridge.StartServer(path => Dispatcher.BeginInvoke(() => OpenBackgroundEditor(path)));
+        if (editPath != null)
+            Dispatcher.BeginInvoke(() => OpenBackgroundEditor(editPath));
+    }
+
+    private void OnBackgroundEditPick()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "Görüntüler|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.webp;*.heic",
+            Title = "Arka planını kaldır",
+        };
+        if (dialog.ShowDialog() == true)
+            OpenBackgroundEditor(dialog.FileName);
+    }
+
+    private void OpenBackgroundEditor(string path)
+    {
+        if (!File.Exists(path))
+        {
+            _tray?.ShowMessage("ScreenForge", "Dosya bulunamadı.");
+            return;
+        }
+
+        var window = new BackgroundEditWindow(path);
+        window.Show();
+        window.Activate();
     }
 
     /// <summary>Ayarlardaki tüm kısayolları (yeniden) kaydeder.</summary>

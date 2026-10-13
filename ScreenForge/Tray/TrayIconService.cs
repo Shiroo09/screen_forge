@@ -20,6 +20,7 @@ public sealed class TrayIconService : IDisposable
     public event Action? ColorPickerRequested;
     public event Action? TrayUploadRequested;
     public event Action? QuickTranslateRequested;
+    public event Action? BackgroundEditRequested;
     public event Action? SettingsRequested;
     public event Action? AboutRequested;
     public event Action? ExitRequested;
@@ -61,6 +62,7 @@ public sealed class TrayIconService : IDisposable
         menu.Items.Add(MenuItem("Renk Seçici", () => ColorPickerRequested?.Invoke(), 0xE790));
         menu.Items.Add(MenuItem("Yükleme Yap", () => TrayUploadRequested?.Invoke(), 0xE898));
         menu.Items.Add(MenuItem("Hızlı Çeviri", () => QuickTranslateRequested?.Invoke(), 0xE8C1));
+        menu.Items.Add(MenuItem("Arka planını kaldır", () => BackgroundEditRequested?.Invoke(), 0xE91B));
         menu.Items.Add(new Separator());
         menu.Items.Add(PresenterToggle());
         menu.Items.Add(SubtitleToggle());

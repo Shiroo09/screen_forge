@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScreenForge", "ScreenForge\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScreenForge.Tests", "ScreenForge.Tests\ScreenForge.Tests.csproj", "{E60EC9A8-EAD3-4133-93D8-C5D6F35D032E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScreenForge.WindowsAI", "ScreenForge.WindowsAI\ScreenForge.WindowsAI.csproj", "{6CD79620-5FF7-4E45-BD90-663C35917F7C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -41,6 +43,18 @@ Global
 		{E60EC9A8-EAD3-4133-93D8-C5D6F35D032E}.Release|x64.Build.0 = Release|Any CPU
 		{E60EC9A8-EAD3-4133-93D8-C5D6F35D032E}.Release|x86.ActiveCfg = Release|Any CPU
 		{E60EC9A8-EAD3-4133-93D8-C5D6F35D032E}.Release|x86.Build.0 = Release|Any CPU
+		{6CD79620-5FF7-4E45-BD90-663C35917F7C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6CD79620-5FF7-4E45-BD90-663C35917F7C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6CD79620-5FF7-4E45-BD90-663C35917F7C}.Debug|x64.ActiveCfg = Debug|x64
+		{6CD79620-5FF7-4E45-BD90-663C35917F7C}.Debug|x64.Build.0 = Debug|x64
+		{6CD79620-5FF7-4E45-BD90-663C35917F7C}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{6CD79620-5FF7-4E45-BD90-663C35917F7C}.Debug|x86.Build.0 = Debug|Any CPU
+		{6CD79620-5FF7-4E45-BD90-663C35917F7C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6CD79620-5FF7-4E45-BD90-663C35917F7C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6CD79620-5FF7-4E45-BD90-663C35917F7C}.Release|x64.ActiveCfg = Release|x64
+		{6CD79620-5FF7-4E45-BD90-663C35917F7C}.Release|x64.Build.0 = Release|x64
+		{6CD79620-5FF7-4E45-BD90-663C35917F7C}.Release|x86.ActiveCfg = Release|Any CPU
+		{6CD79620-5FF7-4E45-BD90-663C35917F7C}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

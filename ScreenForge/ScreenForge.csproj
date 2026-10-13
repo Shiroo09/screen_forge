@@ -10,7 +10,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>ScreenForge</AssemblyName>
     <RootNamespace>ScreenForge</RootNamespace>
-    <Version>1.2.7</Version>
+    <Version>1.2.8</Version>
     <LangVersion>latest</LangVersion>
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -67,6 +67,17 @@
   <ItemGroup>
     <Resource Include="Resources\app.ico" />
     <Resource Include="Resources\app.png" />
+    <Content Include="Models\u2netp.onnx" CopyToOutputDirectory="PreserveNewest" TargetPath="u2netp.onnx" Link="u2netp.onnx" />
+    <Content Include="$(NuGetPackageRoot)microsoft.windowsappsdk.ai\1.8.79\lib\net6.0-windows10.0.17763.0\Microsoft.Windows.AI.Imaging.Projection.dll" Link="Microsoft.Windows.AI.Imaging.Projection.dll" CopyToOutputDirectory="PreserveNewest" TargetPath="Microsoft.Windows.AI.Imaging.Projection.dll" />
+    <Content Include="$(NuGetPackageRoot)microsoft.windowsappsdk.ai\1.8.79\lib\net6.0-windows10.0.17763.0\Microsoft.Windows.AI.Projection.dll" Link="Microsoft.Windows.AI.Projection.dll" CopyToOutputDirectory="PreserveNewest" TargetPath="Microsoft.Windows.AI.Projection.dll" />
+    <Content Include="$(NuGetPackageRoot)microsoft.windowsappsdk.ai\1.8.79\lib\net6.0-windows10.0.17763.0\Microsoft.Graphics.Imaging.Projection.dll" Link="Microsoft.Graphics.Imaging.Projection.dll" CopyToOutputDirectory="PreserveNewest" TargetPath="Microsoft.Graphics.Imaging.Projection.dll" />
+    <Content Include="$(NuGetPackageRoot)microsoft.windowsappsdk.ai\1.8.79\lib\net6.0-windows10.0.17763.0\Microsoft.Windows.AI.ContentSafety.Projection.dll" Link="Microsoft.Windows.AI.ContentSafety.Projection.dll" CopyToOutputDirectory="PreserveNewest" TargetPath="Microsoft.Windows.AI.ContentSafety.Projection.dll" />
+    <Content Include="$(NuGetPackageRoot)microsoft.windowsappsdk.foundation\1.8.260803002\lib\net6.0-windows10.0.17763.0\Microsoft.WindowsAppRuntime.Bootstrap.Net.dll" Link="Microsoft.WindowsAppRuntime.Bootstrap.Net.dll" CopyToOutputDirectory="PreserveNewest" TargetPath="Microsoft.WindowsAppRuntime.Bootstrap.Net.dll" />
+    <Content Include="$(NuGetPackageRoot)microsoft.windowsappsdk.foundation\1.8.260803002\runtimes\win-x64\native\Microsoft.WindowsAppRuntime.Bootstrap.dll" Link="Microsoft.WindowsAppRuntime.Bootstrap.dll" CopyToOutputDirectory="PreserveNewest" TargetPath="Microsoft.WindowsAppRuntime.Bootstrap.dll" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ScreenForge.WindowsAI\ScreenForge.WindowsAI.csproj" />
   </ItemGroup>
 
   <ItemGroup>
