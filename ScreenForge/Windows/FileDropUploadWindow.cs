@@ -14,8 +14,6 @@ namespace ScreenForge.Windows;
 
 public sealed class FileDropUploadWindow
 {
-    private static readonly string[] AllowedExtensions = { ".png", ".jpg", ".jpeg", ".gif", ".webp" };
-
     public void Show()
     {
         Window? win = null;
@@ -43,7 +41,7 @@ public sealed class FileDropUploadWindow
         };
         var dropHint = new TextBlock
         {
-            Text = "PNG · JPG · GIF · WebP",
+            Text = "1 GB'a kadar",
             FontSize = 9,
             FontFamily = new WpfFontFamily("Segoe UI"),
             Foreground = new SolidColorBrush(Color.FromRgb(0x48, 0x58, 0x72)),
@@ -205,8 +203,8 @@ public sealed class FileDropUploadWindow
             e.Handled = true;
             var dlg = new Microsoft.Win32.OpenFileDialog
             {
-                Title = "Yüklemek için resim seç",
-                Filter = "Resimler|*.png;*.jpg;*.jpeg;*.gif;*.webp|Tüm dosyalar|*.*",
+                Title = "Yüklemek için dosya seç",
+                Filter = "Tüm dosyalar|*.*",
                 CheckFileExists = true,
                 Multiselect = false,
             };
@@ -226,30 +224,8 @@ public sealed class FileDropUploadWindow
         win.Show();
     }
 
-    private const long MaxFileSizeBytes = ScreenForge.Editor.ImageExporter.UploadMaxBytes;
-
-    private static bool TryAcceptFile(string path, out string? error)
-    {
-        error = null;
-        if (!AllowedExtensions.Contains(System.IO.Path.GetExtension(path).ToLowerInvariant()))
-        {
-            error = "PNG, JPG, GIF veya WebP seçin.";
-            return false;
-        }
-        try
-        {
-            if (new FileInfo(path).Length > MaxFileSizeBytes)
-            {
-                error = "Dosya boyutu 5,2 MB sınırını aşıyor.";
-                return false;
-            }
-        }
-        catch
-        {
-            return false;
-        }
-        return true;
-    }
+    private static bool TryAcceptFile(string path, out string? error) =>
+        LitterboxUploadProvider.IsAllowedFile(path, out error);
 
     private static bool IsValidDrop(DragEventArgs e)
     {
@@ -265,13 +241,22 @@ public sealed class FileDropUploadWindow
         try
         {
             byte[] bytes = await File.ReadAllBytesAsync(path);
-            string ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+            string ext = Path.GetExtension(path).ToLowerInvariant();
             string mime = ext switch
             {
                 ".jpg" or ".jpeg" => "image/jpeg",
-                ".gif"            => "image/gif",
-                ".webp"           => "image/webp",
-                _                 => "image/png",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                ".png" => "image/png",
+                ".bmp" => "image/bmp",
+                ".mp4" => "video/mp4",
+                ".webm" => "video/webm",
+                ".mp3" => "audio/mpeg",
+                ".wav" => "audio/wav",
+                ".pdf" => "application/pdf",
+                ".zip" => "application/zip",
+                ".txt" => "text/plain",
+                _ => "application/octet-stream",
             };
 
             await Application.Current.Dispatcher.InvokeAsync(() =>
@@ -280,9 +265,9 @@ public sealed class FileDropUploadWindow
                 toast.Show();
             });
 
-            IUploadProvider provider = new PrntscrUploadProvider();
+            IUploadProvider provider = new LitterboxUploadProvider();
             var result = await provider.UploadAsync(bytes, mime, p =>
-                Application.Current.Dispatcher.Invoke(() => toast?.ReportProgress(p)));
+                Application.Current.Dispatcher.Invoke(() => toast?.ReportProgress(p)), Path.GetFileName(path));
 
             await Application.Current.Dispatcher.InvokeAsync(() =>
             {

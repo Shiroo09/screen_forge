@@ -4185,7 +4185,7 @@ public partial class CaptureOverlayWindow : Window
         toast.Show();
         try
         {
-            IUploadProvider provider = new PrntscrUploadProvider();
+            IUploadProvider provider = new LitterboxUploadProvider();
             var result = await provider.UploadAsync(bytes, mime, toast.ReportProgress);
             toast.ShowResult(result.Url);
             if (_settings.AutoCopyLinkAfterUpload)

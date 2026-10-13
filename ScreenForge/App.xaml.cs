@@ -249,7 +249,7 @@ public partial class App : Application
             toast = new Windows.UploadToastWindow();
             toast.Show();
 
-            Upload.IUploadProvider provider = new Upload.PrntscrUploadProvider();
+            Upload.IUploadProvider provider = new Upload.LitterboxUploadProvider();
             var result = await provider.UploadAsync(bytes, mime, toast.ReportProgress);
 
             toast.ShowResult(result.Url);

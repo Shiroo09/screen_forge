@@ -9,9 +9,8 @@ namespace ScreenForge.Editor;
 /// <summary>Sahneyi kodlar (PNG/JPEG/WebP), panoya kopyalar ve dosyaya kaydeder.</summary>
 public static class ImageExporter
 {
-    // Prntscr upload testi (2026-07-07): 5,200,000 byte kabul, 5,242,200+ byte ret.
-    // Sınıra yakın oynama olduğu için güvenli pay bırakılır.
-    public const int UploadMaxBytes = 5_200_000;
+    // Litterbox geçici yükleme sınırı: 1 GB.
+    public const long UploadMaxBytes = ScreenForge.Upload.LitterboxUploadProvider.MaxBytes;
 
     public static SKData Encode(SKBitmap bmp, ImageFormat format, int quality)
     {
@@ -63,7 +62,7 @@ public static class ImageExporter
             return (pngBytes, MimeType(ImageFormat.Png));
 
         if (preserveTransparency)
-            throw new InvalidOperationException("Saydam PNG 5,2 MB sınırını aşıyor. Daha küçük alan seçin veya arkaplanlı yükleyin.");
+            throw new InvalidOperationException("Saydam PNG 1 GB sınırını aşıyor. Daha küçük alan seçin veya arkaplanlı yükleyin.");
 
         foreach (int quality in new[] { 92, 85, 78, 70, 62, 54 })
         {
@@ -73,7 +72,7 @@ public static class ImageExporter
                 return (jpegBytes, MimeType(ImageFormat.Jpeg));
         }
 
-        throw new InvalidOperationException("Yükleme için görüntü 5,2 MB sınırını aşıyor. Daha küçük alan seçin veya kırparak yükleyin.");
+        throw new InvalidOperationException("Yükleme için görüntü 1 GB sınırını aşıyor. Daha küçük alan seçin veya kırparak yükleyin.");
     }
 
     [DllImport("user32.dll", SetLastError = true)]
