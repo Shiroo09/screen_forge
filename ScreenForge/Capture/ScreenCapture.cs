@@ -48,11 +48,74 @@ public static class ScreenCapture
         GetSystemMetrics(SM_CXVIRTUALSCREEN),
         GetSystemMetrics(SM_CYVIRTUALSCREEN));
 
+    // Hızlı yol: DXGI masaüstü kopyalama (açılışta ısınır). Yoksa BitBlt.
+    private static DxgiScreenCache? _dxgi;
+    private static bool _dxgiTried;
+    private static readonly object DxgiGate = new();
+
+    /// <summary>
+    /// Ekran kopyalama hattını ısıtır: DXGI kaynakları açılır ve ilk kare toplanır.
+    /// Kısayol basılınca ~10-20 ms yeterli olur. Başarısızsa sessizce BitBlt'e düşülür.
+    /// </summary>
+    public static void WarmupCapturePath()
+    {
+        lock (DxgiGate)
+        {
+            if (_dxgi is null && !_dxgiTried)
+            {
+                _dxgi = DxgiScreenCache.TryCreate();
+                _dxgiTried = true;
+            }
+        }
+    }
+
     /// <summary>Tüm ekranların birleşik görüntüsünü yakalar.</summary>
     public static Bitmap CaptureVirtualScreen(bool includeCursor)
     {
         var bounds = VirtualScreenBounds;
         var bmp = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
+
+        if (!TryCaptureDxgi(bmp, bounds))
+            CaptureWithBitBlt(bmp, bounds);
+
+        if (includeCursor)
+        {
+            using var g = Graphics.FromImage(bmp);
+            DrawCursor(g, bounds);
+        }
+        return bmp;
+    }
+
+    private static bool TryCaptureDxgi(Bitmap bmp, Rectangle bounds)
+    {
+        lock (DxgiGate)
+        {
+            try
+            {
+                if (_dxgi is null && !_dxgiTried)
+                {
+                    _dxgi = DxgiScreenCache.TryCreate();
+                    _dxgiTried = true;
+                }
+
+                if (_dxgi != null && _dxgi.Bounds != bounds)
+                {
+                    // Ekran düzeni değişti (monitör takma/çözünürlük): yeniden aç.
+                    _dxgi.Dispose();
+                    _dxgi = DxgiScreenCache.TryCreate();
+                }
+
+                return _dxgi != null && _dxgi.TryCapture(bmp);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
+
+    private static void CaptureWithBitBlt(Bitmap bmp, Rectangle bounds)
+    {
         using (var g = Graphics.FromImage(bmp))
         {
             IntPtr desktop = GetDesktopWindow();
@@ -67,11 +130,7 @@ public static class ScreenCapture
                 g.ReleaseHdc(hdcDest);
                 ReleaseDC(desktop, hdcSrc);
             }
-
-            if (includeCursor)
-                DrawCursor(g, bounds);
         }
-        return bmp;
     }
 
     internal static bool TryGetCursorPosition(out int x, out int y)
