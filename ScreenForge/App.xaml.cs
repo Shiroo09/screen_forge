@@ -100,6 +100,36 @@ public partial class App : Application
         BackgroundEditBridge.StartServer(path => Dispatcher.BeginInvoke(() => OpenBackgroundEditor(path)));
         if (editPath != null)
             Dispatcher.BeginInvoke(() => OpenBackgroundEditor(editPath));
+
+        // Kısayol yolunu arka planda ısıt: ilk kısayol soğuk JIT/XAML maliyetiyle
+        // saniyelerce gecikmesin, ilk basış da sonrakiler kadar hızlı açılsın.
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ContextIdle,
+            new Action(() => _ = WarmupCapturePathAsync()));
+    }
+
+    /// <summary>
+    /// Yakalama + overlay açılış hattını ekranda görünmeden ısıtır (JIT, XAML, GDI,
+    /// WPF pencere/render hattı) ve ilk kısayol için hazır pencereyi hazırlar.
+    /// </summary>
+    private async Task WarmupCapturePathAsync()
+    {
+        try
+        {
+            // Açılış işleri yarışmasın diye kısa bir gecikme.
+            await Task.Delay(200);
+
+            // Ekran kopyalama hattı ısınsın: DXGI kaynakları açılır + JIT.
+            // UI thread'i bloklamaması için arka planda.
+            await Task.Run(() => Capture.ScreenCapture.WarmupCapturePath());
+
+            // Overlay penceresi: XAML/JIT + HWND + ilk render + DWM ısınsın, sonraki
+            // kısayol tek karede açılsın.
+            PrepareOverlay();
+        }
+        catch
+        {
+            // Isınma başarısız olursa kısayol yine çalışır; yalnızca ilk açılış yavaş kalır.
+        }
     }
 
     private void OnBackgroundEditPick()
@@ -201,6 +231,33 @@ public partial class App : Application
 
     private bool _captureInProgress;
 
+    /// <summary>
+    /// Kısayol anında Show() tek karede açılsın diye önceden hazırlanmış overlay
+    /// penceresi (HWND + Loaded + ilk render + DWM ısıtılmış, ekran dışında denenmiş).
+    /// </summary>
+    private ScreenForge.Windows.CaptureOverlayWindow? _preparedOverlay;
+
+    private void PrepareOverlay()
+    {
+        if (_preparedOverlay != null) return;
+        try
+        {
+            var bounds = Capture.ScreenCapture.VirtualScreenBounds;
+            // Ön gösterim gerçek bir ekran görüntüsü çizsin: Show() ile ilk yeni kare
+            // arasında bir kare eski içerik görünürse kullanıcı fark etmesin.
+            var placeholder = Capture.ScreenCapture.CaptureVirtualScreen(false);
+            var win = new ScreenForge.Windows.CaptureOverlayWindow(placeholder, bounds, Settings,
+                ScreenForge.Windows.CaptureMode.Region);
+            win.PrepareForInstantShow();
+            _preparedOverlay = win;
+        }
+        catch (Exception)
+        {
+            // Hazırlanamazsa kısayol yine çalışır; yalnızca normal hızda açılır.
+            _preparedOverlay = null;
+        }
+    }
+
     // Serbest mod sahnesi — oturum boyunca bellekte hatırlanır.
     private Editor.Scene? _freeScene;
 
@@ -248,22 +305,61 @@ public partial class App : Application
     {
         if (_captureInProgress) return;
         _captureInProgress = true;
+        System.Drawing.Bitmap? captured = null;
         try
         {
             var bounds = Capture.ScreenCapture.VirtualScreenBounds;
             // Overlay görüntünün sahibi olur; kapanınca dispose eder.
-            var full = Capture.ScreenCapture.CaptureVirtualScreen(Settings.ShowCursor);
-            var overlay = new ScreenForge.Windows.CaptureOverlayWindow(full, bounds, Settings, mode);
+            var full = captured = Capture.ScreenCapture.CaptureVirtualScreen(Settings.ShowCursor);
+
+            // Hazır pencere varsa kullan: Show() tek karede görünür. Ekran düzeni
+            // değişmişse (monitör eklenmesi/çözünürlük) yenisi açılır.
+            var overlay = _preparedOverlay;
+            _preparedOverlay = null;
+            if (overlay != null && overlay.VirtualBounds != bounds)
+            {
+                try { overlay.Close(); } catch { }
+                overlay = null;
+            }
+
+            if (overlay != null)
+            {
+                overlay.SetScreenshot(full, bounds, mode);
+            }
+            else
+            {
+                overlay = new ScreenForge.Windows.CaptureOverlayWindow(full, bounds, Settings, mode);
+                // HWND'yi Show()'dan önce oluştur: Show()'un ilk ~50 ms'lik pencere
+                // kaynağı maliyeti kalkar.
+                _ = new System.Windows.Interop.WindowInteropHelper(overlay).EnsureHandle();
+            }
+
             // Serbest sahne oturum boyunca bellekte kalır (Esc sonrası korunur).
             overlay.FreeSceneProvider = () => _freeScene;
             overlay.FreeSceneSink = s => _freeScene = s;
-            overlay.Closed += (_, _) => { full.Dispose(); _captureInProgress = false; };
+            overlay.Closed += (_, _) =>
+            {
+                full.Dispose();
+                _captureInProgress = false;
+                // Sonraki kısayol da anında açılsın.
+                Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
+                    new Action(PrepareOverlay));
+            };
             overlay.Show();
             overlay.Activate();
+            // Odak/öne getirme (BringWindowToTop ~35 ms) + pencere listesi ilk karenin
+            // sonrasına bırakılır; Show() ve ilk kare bloklanmasın.
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
+                new Action(() =>
+                {
+                    overlay.EnsureForeground();
+                    overlay.BuildWindowList();
+                }));
         }
         catch (Exception ex)
         {
             _captureInProgress = false;
+            try { captured?.Dispose(); } catch { /* zaten bırakılmış olabilir */ }
             _tray?.ShowMessage("Hata", "Yakalama başarısız: " + ex.Message);
         }
     }

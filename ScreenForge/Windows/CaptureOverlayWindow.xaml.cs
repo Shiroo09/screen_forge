@@ -60,8 +60,8 @@ public partial class CaptureOverlayWindow : Window
     private enum Phase { Select, Edit }
     private enum PendingFreeExportAction { Copy, Save, Upload }
 
-    private readonly Bitmap _screenshot;
-    private readonly Rectangle _virtualBounds;
+    private Bitmap _screenshot;
+    private Rectangle _virtualBounds;
     private readonly AppSettings _settings;
 
     private CaptureMode _mode;
@@ -95,7 +95,7 @@ public partial class CaptureOverlayWindow : Window
     private bool _windowHoverActive = true;
     private List<(IntPtr hwnd, WpfRect dip)> _visibleWindows = new();
     private WpfRect _hoveredWindowDip = WpfRect.Empty;
-    private readonly IntPtr _foregroundWindowAtOpen;
+    private IntPtr _foregroundWindowAtOpen;
     // Pencere tıklandı ama henüz commit edilmedi (sürüklemeye başlarsa iptal)
     private bool _windowClickPending;
     private WpfRect _windowClickBounds;
@@ -133,6 +133,8 @@ public partial class CaptureOverlayWindow : Window
     private byte[]? _lastTranslatedPng;
     private CancellationTokenSource? _copyFeedbackCts;
     private int _translateZoomAnim;
+    /// <summary>Ön gösterim (bkz. <see cref="PrepareForInstantShow"/>) sürüyor mu?</summary>
+    private bool _preparedPreview;
 
     private static System.Windows.Input.Cursor RegionCursor => WhiteCrossCursor.Instance;
 
@@ -187,6 +189,84 @@ public partial class CaptureOverlayWindow : Window
         ToolbarGrip.MouseLeftButtonUp += OnToolbarGripUp;
         CropApplyButton.Click += (_, _) => CommitSceneCropUi();
         CropCancelButton.Click += (_, _) => CancelSceneCropUi();
+    }
+
+    /// <summary>Pencerenin yerleştiği sanal ekran sınırları (fiziksel piksel).</summary>
+    public Rectangle VirtualBounds => _virtualBounds;
+
+    /// <summary>Pencerenin gösterdiği tam ekran görüntüsü (kırpma/kaynak için).</summary>
+    public Bitmap CurrentScreenshot => _screenshot;
+
+    /// <summary>
+    /// Önceden hazırlanmış (bkz. <see cref="PrepareForInstantShow"/>) pencereye yeni
+    /// yakalamayı yükler. Pencere hattı hazır olduğundan Show() tek karede görünür.
+    /// Eski görüntü dispose edilir; sahiplik pencereye geçer.
+    /// </summary>
+    public void SetScreenshot(Bitmap screenshot, Rectangle virtualBounds, CaptureMode mode)
+    {
+        // Önce dönüşüm: hata olursa sahiplik ve görünüm değişmesin.
+        var source = ScreenCapture.ToBitmapSource(screenshot);
+
+        if (!ReferenceEquals(_screenshot, screenshot))
+            _screenshot?.Dispose();
+        _screenshot = screenshot;
+        _foregroundWindowAtOpen = GetForegroundWindow();
+        if (_virtualBounds != virtualBounds)
+        {
+            _virtualBounds = virtualBounds;
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd != IntPtr.Zero)
+                MoveWindow(hwnd, virtualBounds.X, virtualBounds.Y, virtualBounds.Width, virtualBounds.Height, false);
+        }
+        ScreenImage.Source = source;
+
+        if (_mode != mode)
+        {
+            _mode = mode;
+            ApplyMode();
+        }
+        else
+        {
+            // Aynı modda seçim durumu bozulmasın; yalnızca çubuklar imlecin
+            // monitörüne göre yerleştirilsin.
+            PositionTopBars();
+        }
+    }
+
+    /// <summary>
+    /// Pencereyi ekranda hiç görünmeden bir kez açıp kapatır: HWND, Loaded, ilk render
+    /// ve DWM hazırlanır; sonraki Show() anında görünür. Ön gösterim sırasında pencere
+    /// ekran dışına taşınır ve odak çalınmaz.
+    /// </summary>
+    public void PrepareForInstantShow()
+    {
+        var hwnd = new WindowInteropHelper(this).EnsureHandle();
+        ShowActivated = false;
+        MoveWindow(hwnd, _virtualBounds.X - 100000, _virtualBounds.Y,
+            _virtualBounds.Width, _virtualBounds.Height, false);
+        _preparedPreview = true;
+        ContentRendered += OnPreparedRendered;
+        Show();
+        // Yedek: ekran dışında ContentRendered gelmezse yine de geri alın.
+        _ = Dispatcher.InvokeAsync(async () =>
+        {
+            await System.Threading.Tasks.Task.Delay(500);
+            FinishPreparedPreview();
+        });
+    }
+
+    private void OnPreparedRendered(object? sender, EventArgs e) => FinishPreparedPreview();
+
+    private void FinishPreparedPreview()
+    {
+        if (!_preparedPreview) return;
+        _preparedPreview = false;
+        ContentRendered -= OnPreparedRendered;
+        Hide();
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd != IntPtr.Zero)
+            MoveWindow(hwnd, _virtualBounds.X, _virtualBounds.Y,
+                _virtualBounds.Width, _virtualBounds.Height, false);
     }
 
     private void OnToolbarGripDown(object sender, MouseButtonEventArgs e)
@@ -311,7 +391,7 @@ public partial class CaptureOverlayWindow : Window
     }
 
     // ===================== Pencere algılama =====================
-    private void BuildWindowList()
+    internal void BuildWindowList()
     {
         if (_mode != CaptureMode.Region) return;
         var hwndSelf = new WindowInteropHelper(this).Handle;
@@ -411,7 +491,9 @@ public partial class CaptureOverlayWindow : Window
     {
         var hwnd = new WindowInteropHelper(this).Handle;
         HwndSource.FromHwnd(hwnd)?.AddHook(OverlayInputHook);
-        MoveWindow(hwnd, _virtualBounds.X, _virtualBounds.Y, _virtualBounds.Width, _virtualBounds.Height, true);
+        // bRepaint: false — pencere bu aşamada henüz görünmediği için repaint
+        // gereksiz ve tam sanal ekran boyutunda ~50-60 ms'lik senkron bir gecikme.
+        MoveWindow(hwnd, _virtualBounds.X, _virtualBounds.Y, _virtualBounds.Width, _virtualBounds.Height, false);
     }
 
     /// <summary>
@@ -427,7 +509,7 @@ public partial class CaptureOverlayWindow : Window
         return new IntPtr(MA_ACTIVATE);
     }
 
-    private void EnsureForeground()
+    internal void EnsureForeground()
     {
         var hwnd = new WindowInteropHelper(this).Handle;
         IntPtr fore = GetForegroundWindow();
@@ -461,8 +543,8 @@ public partial class CaptureOverlayWindow : Window
         UpdateDimRects(WpfRect.Empty);
         BuildModeBar();
         ApplyMode();
-        EnsureForeground();
-        BuildWindowList();
+        // Odak/öne getirme + pencere listesi App tarafından Show() sonrasına bırakılır
+        // (BringWindowToTop ~35 ms — ilk kareyi bloklamasın).
         // Çeviri ısınması seçim sırasında UI'yi kasmaması için edit fazına bırakıldı.
     }
 
