@@ -23,6 +23,41 @@ public sealed class ScreenCaptureTests
     }
 
     [Fact]
+    public void Capture_ThenCrop_ProducesTheRequestedRegion()
+    {
+        // Kaydet / panoya kopyala / yükle yollarının kullandığı boru hattı.
+        using var full = ScreenCapture.CaptureVirtualScreen(includeCursor: false);
+
+        var region = new Rectangle(full.Width / 4, full.Height / 4, 320, 200);
+        using var cropped = ScreenCapture.Crop(full, region);
+
+        Assert.Equal(320, cropped.Width);
+        Assert.Equal(200, cropped.Height);
+    }
+
+    [Fact]
+    public void Crop_OutsideSource_ReturnsSmallestUsableBitmap()
+    {
+        using var full = ScreenCapture.CaptureVirtualScreen(includeCursor: false);
+
+        using var cropped = ScreenCapture.Crop(full, new Rectangle(full.Width + 50, full.Height + 50, 80, 80));
+
+        Assert.True(cropped.Width >= 1);
+        Assert.True(cropped.Height >= 1);
+    }
+
+    [Fact]
+    public void Capture_ThenToBitmapSource_KeepsPixelSize()
+    {
+        using var full = ScreenCapture.CaptureVirtualScreen(includeCursor: false);
+
+        var source = ScreenCapture.ToBitmapSource(full);
+
+        Assert.Equal(full.Width, source.PixelWidth);
+        Assert.Equal(full.Height, source.PixelHeight);
+    }
+
+    [Fact]
     public void WarmupCapturePath_ThenCapture_StillMatchesVirtualScreen()
     {
         ScreenCapture.WarmupCapturePath();
