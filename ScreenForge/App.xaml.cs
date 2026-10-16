@@ -339,7 +339,7 @@ public partial class App : Application
             overlay.FreeSceneSink = s => _freeScene = s;
             overlay.Closed += (_, _) =>
             {
-                full.Dispose();
+                // Görüntüyü pencere bırakır (bkz. CaptureOverlayWindow kapanışı).
                 _captureInProgress = false;
                 // Sonraki kısayol da anında açılsın.
                 Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,

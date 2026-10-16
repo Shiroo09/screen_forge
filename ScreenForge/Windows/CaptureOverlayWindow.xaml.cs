@@ -157,6 +157,8 @@ public partial class CaptureOverlayWindow : Window
         SourceInitialized += OnSourceInitialized;
         Closed += async (_, _) =>
         {
+            // Ekran görüntüsü pencerenin malıdır: kapanınca bırakılır.
+            _screenshot?.Dispose();
             _translateCts?.Cancel();
             _translateCts?.Dispose();
             _copyFeedbackCts?.Cancel();

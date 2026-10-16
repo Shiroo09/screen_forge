@@ -68,6 +68,23 @@ public sealed class CaptureOverlayScreenshotTests
     }
 
     [Fact]
+    public void Close_DisposesTheScreenshot()
+    {
+        WpfRunner.Run(() =>
+        {
+            var settings = new AppSettings();
+            var bmp = new Bitmap(8, 8, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+
+            var win = new CaptureOverlayWindow(bmp, new Rectangle(0, 0, 8, 8), settings, CaptureMode.Region);
+            win.Close();
+
+            // Pencere kapandığında ekran görüntüsü de bırakılmalı; aksi hâlde atılan
+            // hazırlık pencereleri tam ekran görüntüsü kadar bellekte kalırdı.
+            Assert.ThrowsAny<Exception>(() => bmp.GetPixel(0, 0));
+        });
+    }
+
+    [Fact]
     public void PrepareForInstantShow_EndsWithHiddenWindowAtItsBounds()
     {
         WpfRunner.Run(() =>
