@@ -33,6 +33,12 @@ internal sealed class DxgiScreenCache : IDisposable
     private Rectangle _bounds;
     private bool _disposed;
 
+    /// <summary>
+    /// Yeni kare gelmediğinde beklenecek süre. Ekran tam yakalama anında değiştiyse
+    /// kare yolda olabilir; bir kare beklemeden önbellek bir önceki anı verir.
+    /// </summary>
+    private const int FrameSettleMs = 16;
+
     /// <summary>Kapladığı sanal ekran alanı (tüm çıktıların birleşimi).</summary>
     public Rectangle Bounds => _bounds;
 
@@ -105,10 +111,21 @@ internal sealed class DxgiScreenCache : IDisposable
         if (_disposed) return false;
         try
         {
+            // Önce anında dene. Yeni kare yoksa ekran ya sabittir ya da kare yoldadır;
+            // yolda olma ihtimaline karşı bir kare bekle ve yalnızca bekleyenleri
+            // tekrar dene — böylece yakalama o anki ekranı yansıtır.
+            List<Entry>? pending = null;
             foreach (var entry in _entries)
             {
-                // Yeni kare geldiyse önbelleği tazele; gelmediyse önbellek zaten güncel.
-                entry.Source.TryCopyBgra(entry.Cache, out _);
+                if (!entry.Source.TryCopyBgra(entry.Cache, out _))
+                    (pending ??= new List<Entry>()).Add(entry);
+            }
+
+            if (pending != null)
+            {
+                Thread.Sleep(FrameSettleMs);
+                foreach (var entry in pending)
+                    entry.Source.TryCopyBgra(entry.Cache, out _);
             }
 
             var data = dest.LockBits(new Rectangle(0, 0, dest.Width, dest.Height),
