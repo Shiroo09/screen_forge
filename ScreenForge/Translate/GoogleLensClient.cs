@@ -124,12 +124,15 @@ public sealed class GoogleLensClient : IDisposable
 
     internal static byte[] BuildRequest(
         byte[] imageBytes, int width, int height, string targetLang, string? sourceLang)
+        => BuildRequest(imageBytes, width, height, targetLang, sourceLang, (ulong)Random.Shared.NextInt64(1, long.MaxValue));
+
+    /// <summary>Deterministic overload: the request UUID is supplied, not random.</summary>
+    internal static byte[] BuildRequest(
+        byte[] imageBytes, int width, int height, string targetLang, string? sourceLang, ulong uuid)
     {
         const int PlatformWeb = 3;
         const int SurfaceChromium = 4;
         const int FilterTranslate = 2;
-
-        ulong uuid = (ulong)Random.Shared.NextInt64(1, long.MaxValue);
 
         var root = new ProtoWriter();
         root.WriteMessage(1, objects =>
@@ -180,11 +183,13 @@ public sealed class GoogleLensClient : IDisposable
     }
 
     internal static byte[] BuildOcrRequest(byte[] imageBytes, int width, int height)
+        => BuildOcrRequest(imageBytes, width, height, (ulong)Random.Shared.NextInt64(1, long.MaxValue));
+
+    /// <summary>Deterministic overload: the request UUID is supplied, not random.</summary>
+    internal static byte[] BuildOcrRequest(byte[] imageBytes, int width, int height, ulong uuid)
     {
         const int PlatformWeb = 3;
         const int SurfaceChromium = 4;
-
-        ulong uuid = (ulong)Random.Shared.NextInt64(1, long.MaxValue);
 
         var root = new ProtoWriter();
         root.WriteMessage(1, objects =>

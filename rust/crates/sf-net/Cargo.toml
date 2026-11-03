@@ -1,0 +1,11 @@
+[package]
+name = "sf-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Protobuf wire encoding, translation routing, reverse-image-search and upload helpers (Rust port of ScreenForge.Translate/Search/Upload)"
+
+[dependencies]
+serde_json = "1"
+base64 = "0.22"
