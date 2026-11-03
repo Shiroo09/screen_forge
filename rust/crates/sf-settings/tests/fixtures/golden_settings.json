@@ -1,0 +1,191 @@
+{
+  "ShowCursor": true,
+  "AutoCopyLinkAfterUpload": false,
+  "AutoCloseUploadWindow": true,
+  "LaunchAtStartup": false,
+  "RegionHotkey": {
+    "Modifiers": "Alt, Control",
+    "Key": "S",
+    "IsValid": true
+  },
+  "FullScreenHotkey": {
+    "Modifiers": "None",
+    "Key": "",
+    "IsValid": false
+  },
+  "FullScreenUploadHotkey": {
+    "Modifiers": "None",
+    "Key": "",
+    "IsValid": false
+  },
+  "CollageHotkey": {
+    "Modifiers": "None",
+    "Key": "",
+    "IsValid": false
+  },
+  "QuickTranslateHotkey": {
+    "Modifiers": "Control",
+    "Key": "D1",
+    "IsValid": true
+  },
+  "SettingsRevision": 2,
+  "OutputFormat": "Webp",
+  "Quality": 88,
+  "SaveDirectory": "C:/shots",
+  "ToolStyles": {
+    "StrokeColor": "#FFEA6F12",
+    "FillColor": "#00000000",
+    "FreeBackgroundColor": "#FF1F2430",
+    "StrokeWidth": 6,
+    "Opacity": 1,
+    "ArrowHeadScale": 1,
+    "FontFamily": "Segoe UI",
+    "FontSize": 20,
+    "FontBold": true,
+    "FontItalic": false,
+    "TextColor": "#FFFFFFFF",
+    "TextShadow": true,
+    "TextShadowLevel": 1,
+    "TextStroke": false,
+    "TextStrokeColor": "#FF000000",
+    "TextRibbon": true,
+    "TextRibbonColor": "#CC1F2430",
+    "TextAlignment": "Center",
+    "StepShape": "Bubble",
+    "StepColor": "#FFE5484D",
+    "StepTextColor": "#FFFFFFFF",
+    "StepSize": 28,
+    "BlurStrength": 8,
+    "BlurPixelate": false,
+    "LastTool": "Select"
+  },
+  "Gif": {
+    "Enabled": true,
+    "Fps": 24,
+    "ColorCount": 128,
+    "Quantizer": "Octree",
+    "SamplingFactor": 5,
+    "Dithering": true,
+    "UseGlobalPalette": true,
+    "OptimizeUnchangedPixels": true,
+    "ChangeTolerance": 0,
+    "MaxFrameMemoryMb": 1024,
+    "CaptureCursor": true,
+    "HighlightClicks": true,
+    "HighlightCursor": false,
+    "ShowKeys": true,
+    "HighlightRadius": 12
+  },
+  "Video": {
+    "Enabled": true,
+    "Fps": 25,
+    "Quality": "Medium",
+    "CaptureCursor": true,
+    "HighlightClicks": true,
+    "RecordSystemAudio": true,
+    "RecordMicrophone": false,
+    "MicDeviceId": "",
+    "ShowCountdown": true
+  },
+  "Presenter": {
+    "DefaultsRevision": 5,
+    "Enabled": true,
+    "PenEnabled": true,
+    "PenHotkey": {
+      "Modifiers": "Control",
+      "Key": "D1",
+      "IsValid": true
+    },
+    "LaserEnabled": true,
+    "LaserHotkey": {
+      "Modifiers": "Control",
+      "Key": "D2",
+      "IsValid": true
+    },
+    "RectangleEnabled": false,
+    "RectangleHotkey": {
+      "Modifiers": "None",
+      "Key": "",
+      "IsValid": false
+    },
+    "EllipseEnabled": false,
+    "EllipseHotkey": {
+      "Modifiers": "None",
+      "Key": "",
+      "IsValid": false
+    },
+    "ArrowEnabled": false,
+    "ArrowHotkey": {
+      "Modifiers": "None",
+      "Key": "",
+      "IsValid": false
+    },
+    "LineEnabled": false,
+    "LineHotkey": {
+      "Modifiers": "None",
+      "Key": "",
+      "IsValid": false
+    },
+    "SpotlightEnabled": true,
+    "SpotlightHotkey": {
+      "Modifiers": "Control",
+      "Key": "D3",
+      "IsValid": true
+    },
+    "ArrowBendEnabled": false,
+    "ArrowBendHotkey": {
+      "Modifiers": "None",
+      "Key": "Space",
+      "IsValid": true
+    },
+    "CancelEnabled": true,
+    "CancelHotkey": {
+      "Modifiers": "None",
+      "Key": "Escape",
+      "IsValid": true
+    },
+    "PenColor": "#FFEA6F12",
+    "InkColors": [
+      "#FFEA6F12",
+      "#FF2563EB",
+      "#FF16A34A",
+      "#FFDC2626",
+      "#FFFFFFFF"
+    ],
+    "PenWidth": 7,
+    "LaserColor": "#FFFF3D6E",
+    "LaserWidth": 2,
+    "LaserFadeMs": 700,
+    "SpotlightRadius": 300,
+    "SpotlightSoftness": 20,
+    "SpotlightDim": 0.4,
+    "InkShapeConvert": "DrawAndHold",
+    "InkTextConvertEnabled": true,
+    "ColorBinds": []
+  },
+  "Subtitle": {
+    "Enabled": false,
+    "SourceX": 0,
+    "SourceY": 0,
+    "SourceW": 0,
+    "SourceH": 0,
+    "BoxX": 0,
+    "BoxY": 0,
+    "BoxW": 0,
+    "BoxH": 0,
+    "Theme": "gunduz",
+    "BackColor": "#101218",
+    "TextColor": "#FFFFFF",
+    "BorderColor": "#FFFFFF",
+    "Opacity": 0.5,
+    "BorderThickness": 0
+  },
+  "TranslateSourceLanguage": "en",
+  "TranslateTargetLanguage": "tr",
+  "TranslateNativeLanguage": "tr",
+  "TranslatePairLanguage": "en",
+  "RecentVisualLanguages": [
+    "de",
+    "fr"
+  ]
+}

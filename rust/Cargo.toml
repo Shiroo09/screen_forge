@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/sf-gif"]
+members = ["crates/sf-gif", "crates/sf-settings"]
 
 [workspace.package]
 version = "0.1.0"
