@@ -64,6 +64,23 @@ instead (capture a frame both ways, diff).
 
 ## Not covered here
 
+## What runs now (verified on this machine)
+
+```
+screenforge png out.png          capture -> PNG
+screenforge crop out.png 0 0 400 300
+screenforge gif out.gif 10 100   N captures -> GIF
+screenforge record out.gif 5 10  5 s real-time recording -> GIF
+screenforge shot out.png         capture + clipboard (CF_DIB)
+screenforge run                  tray shell, Alt+Shift+S captures (hotkey proven
+                                 by driving Ctrl+Shift+F9 and getting 2 PNGs)
+screenforge settings             reads %APPDATA%\ScreenForge\settings.json
+```
+
+Still missing for full parity: MP4 recording + audio, the interactive editor UI,
+the settings window, upload/translate wiring, and the two no-Rust-counterpart
+pieces (Windows App SDK AI, Velopack).
+
 The C# app has 369 xunit tests (`ScreenForge.Tests/`) that encode behaviour the
 Rust crates must satisfy — treat them as the acceptance suite, porting the
 relevant ones alongside each crate.
