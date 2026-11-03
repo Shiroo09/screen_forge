@@ -178,6 +178,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf-overlay"
+version = "0.1.0"
+dependencies = [
+ "sf-edit",
+]
+
+[[package]]
 name = "sf-settings"
 version = "0.1.0"
 dependencies = [
