@@ -70,6 +70,16 @@ fn run(args: &[String]) -> Result<String, String> {
                 stats.kept, stats.dropped, stats.elapsed_s
             ))
         }
+        Some("shot") => {
+            // shot [out.png] — capture and put it on the clipboard, then save.
+            let out = args.get(1).cloned().unwrap_or_else(|| {
+                format!("{}/sf-shot.png", std::env::temp_dir().display())
+            });
+            let shot = sf_capture::capture_virtual_screen()?;
+            sf_capture::copy_bgra_to_clipboard(shot.width, shot.height, &shot.bgra)?;
+            write_png(&out, shot.width, shot.height, &shot.bgra)?;
+            Ok(format!("copied to clipboard + wrote {out} ({}x{})", shot.width, shot.height))
+        }
         Some("run") => {
             // run [seconds] — register the capture hotkey (Alt+Shift+S), stay in
             // the tray, and save a PNG each time it fires. Proves the interactive
@@ -96,7 +106,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|shot|run|settings> ...".to_string()),
     }
 }
 

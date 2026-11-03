@@ -61,6 +61,9 @@ cargo run -p sf-cli -- settings                     # load %APPDATA% settings
 cargo run -p sf-cli -- run                           # tray shell: Alt+Shift+S captures
 ```
 
+`shot` captures and places the image on the Windows clipboard (CF_DIB) as well as
+saving it — verified by reading it back with `Clipboard.GetImage()`.
+
 The `run` command is the interactive path: it registers the global hotkey,
 stays alive, and saves a PNG each time the chord fires. Verified by driving it
 (Ctrl+Shift+F9 to avoid the running C# app's chord) — two synthesized presses
