@@ -109,3 +109,42 @@ fn overlay_without_work_reports_none() {
     };
     assert!(!o.has_work());
 }
+
+// ─── Real screen capture (GDI BitBlt) ─────────────────────────────────────────
+
+#[test]
+#[cfg(windows)]
+fn captures_the_virtual_screen_as_bgra() {
+    let (vx, vy, vw, vh) = sf_capture::virtual_screen_bounds();
+    assert!(vw > 0 && vh > 0, "virtual screen {vw}x{vh} at ({vx},{vy})");
+
+    let shot = sf_capture::capture_virtual_screen().expect("capture");
+
+    assert_eq!(shot.width, vw);
+    assert_eq!(shot.height, vh);
+    assert_eq!(shot.bgra.len(), (vw as usize) * (vh as usize) * 4);
+
+    // A real desktop is not a single uniform colour; the buffer must carry
+    // variation, not a zeroed or constant fill.
+    let nonzero = shot.bgra.iter().filter(|&&b| b != 0).count();
+    assert!(nonzero > shot.bgra.len() / 100, "capture looks blank ({nonzero} non-zero bytes)");
+}
+
+#[test]
+#[cfg(windows)]
+fn captures_a_region_and_crops_it() {
+    let shot = sf_capture::capture_region(0, 0, 320, 240).expect("capture region");
+    assert_eq!(shot.width, 320);
+    assert_eq!(shot.height, 240);
+    assert_eq!(shot.bgra.len(), 320 * 240 * 4);
+
+    let cropped = shot.crop((10, 10, 100, 80));
+    assert_eq!(cropped.width, 100);
+    assert_eq!(cropped.height, 80);
+    assert_eq!(cropped.bgra.len(), 100 * 80 * 4);
+
+    // Crop of a crop: the top-left pixel must match the original at (10,10).
+    let src = ((10 * 320) + 10) * 4;
+    assert_eq!(cropped.bgra[0], shot.bgra[src]);
+    assert_eq!(cropped.bgra[1], shot.bgra[src + 1]);
+}
