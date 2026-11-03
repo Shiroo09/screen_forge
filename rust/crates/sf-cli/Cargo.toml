@@ -1,0 +1,20 @@
+[package]
+name = "sf-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Minimal ScreenForge CLI: capture the screen, encode PNG or an animated GIF"
+
+[[bin]]
+name = "screenforge"
+path = "src/main.rs"
+
+[dependencies]
+sf-gif = { path = "../sf-gif" }
+sf-capture = { path = "../sf-capture" }
+
+png = "0.17"
+
+[dev-dependencies]
+gif = "0.13"

@@ -34,7 +34,7 @@ the algorithm, not just the language: `GifFile<W: Write>` already streams.
    `GoogleTextTranslateClient`, `TranslateLanguageRouter`),
    `Search/ReverseImageSearch.cs`. `reqwest` + `serde_json`; ProtoWriter is a
    ~50-line hand-rolled protobuf encoder, port it as-is.
-5. 🟡 **`sf-capture`** — input layer done (key labels, reserved keys, overlay colors, shared `MouseButtons`); screen capture (GDI/DXGI) and hooks still pending. `windows-rs`.
+5. 🟡 **`sf-capture`** — input layer + real GDI BitBlt screen capture done (`capture_virtual_screen`, `capture_region`, crop). Low-level input hooks still pending; DXGI duplication is the fast path to add.
 6. 🟡 **`sf-edit`** — frame/document model, frame+image ops, edit history, view transform done; Skia scene graph/renderer still pending. Undo bounding addressed in the frame model.
 7. **`sf-record`** — `Record/VideoRecorder.cs`, `MfH264Writer.cs`,
    `SystemLoopback.cs`, `AudioMixer.cs`. Hardest pure-Win32 piece:
