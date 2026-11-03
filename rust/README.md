@@ -4,6 +4,21 @@ Reference implementation of ScreenForge in Rust. Starts with the parts that are
 pure logic, where behaviour can be pinned byte-for-byte against the C# original
 before anything platform-specific is rewritten.
 
+## Measured memory (the reason for the port)
+
+`Get-Process` on the shipping C# app vs the Rust pipeline, on this machine
+(virtual desktop 3383x2160):
+
+| | Working set | Private committed |
+|---|---|---|
+| C# app, idle | 118 MB | 516 MB |
+| Rust CLI, single capture -> PNG | **20.6 MB peak** | - |
+| Rust CLI, 8-frame GIF encode | 105 MB peak (one 29 MB frame buffer dominates) | - |
+
+Release binary: **244 KB** (the C# `bin/Release` folder is 329 MB). The GIF path
+streams frames through `GifFile<W: Write>`, so it never holds all of them - the
+C# export opened every frame as BGRA at once (`GifEditorWindow.Panels.cs:1059`).
+
 Measured baseline for why this exists: the shipping C# app idles at
 **~118 MB working set / 516 MB private** (`Get-Process ScreenForge`), which is
 framework overhead a tray app shouldn't carry.
