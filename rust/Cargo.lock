@@ -140,9 +140,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf-capture"
+version = "0.1.0"
+dependencies = [
+ "sf-settings",
+]
+
+[[package]]
 name = "sf-edit"
 version = "0.1.0"
 dependencies = [
+ "sf-capture",
  "sf-gif",
 ]
 

@@ -11,22 +11,8 @@ use std::sync::{Arc, Mutex};
 
 use sf_gif::frame_store;
 
-/// Mouse buttons held on a frame. Bit flags, matching `ScreenForge.Gif.Input.MouseButtons`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub struct MouseButtons(pub u8);
-
-impl MouseButtons {
-    pub const NONE: u8 = 0;
-    pub const LEFT: u8 = 1;
-    pub const RIGHT: u8 = 2;
-    pub const MIDDLE: u8 = 4;
-    pub const EXTRA1: u8 = 8;
-    pub const EXTRA2: u8 = 16;
-
-    pub fn is_none(self) -> bool {
-        self.0 == Self::NONE
-    }
-}
+/// Mouse buttons held on a frame, shared with the input layer.
+pub use sf_capture::MouseButtons;
 
 /// Input activity carried by a frame.
 #[derive(Clone, PartialEq, Debug, Default)]

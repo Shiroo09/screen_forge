@@ -8,3 +8,4 @@ description = "Frame/document model and pure edit operations (Rust port of Scree
 
 [dependencies]
 sf-gif = { path = "../sf-gif" }
+sf-capture = { path = "../sf-capture" }
