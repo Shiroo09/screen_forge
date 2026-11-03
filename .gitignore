@@ -40,3 +40,6 @@ iscc_err.txt
 
 # Rust build output (rust/ workspace)
 /rust/target/
+
+# scratch measure scripts
+/rust/*.ps1
