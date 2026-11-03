@@ -20,6 +20,10 @@ impl MouseButtons {
         self.0 |= flag;
     }
 
+    pub fn remove(&mut self, flag: u8) {
+        self.0 &= !flag;
+    }
+
     pub fn is_none(self) -> bool {
         self.0 == Self::NONE
     }

@@ -6,6 +6,7 @@
 
 pub mod clipboard;
 pub mod hotkey;
+pub mod input_hook;
 pub mod key_labels;
 pub mod screen;
 pub mod keys;
