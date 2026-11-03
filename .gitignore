@@ -34,3 +34,9 @@ iscc_err.txt
 
 # Claude
 .claude/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# Rust build output (rust/ workspace)
+/rust/target/

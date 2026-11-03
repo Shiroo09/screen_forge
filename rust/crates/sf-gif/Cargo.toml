@@ -1,0 +1,14 @@
+[package]
+name = "sf-gif"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "GIF frame store, palette quantizers, LZW encoder and GIF89a writer (Rust port of ScreenForge.Gif)"
+
+[dependencies]
+# Deflate for FrameStore. Pure-Rust backend keeps the crate dependency-free at link time.
+flate2 = "1.0"
+
+[dev-dependencies]
+gif = "0.13"
