@@ -142,6 +142,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf-media"
+version = "0.1.0"
+dependencies = [
+ "sf-settings",
+]
+
+[[package]]
 name = "sf-settings"
 version = "0.1.0"
 dependencies = [
