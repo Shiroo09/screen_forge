@@ -7,9 +7,11 @@
 
 mod lang;
 mod modifiers;
+mod recents;
 
 pub use lang::{default_pair, is_known, label, map_ui_culture, LANGUAGES};
 pub use modifiers::Modifiers;
+pub use recents::{ensure_pair, VisualTranslateRecents};
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
