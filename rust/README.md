@@ -55,8 +55,15 @@ GIF encoder, no C# involved:
 ```
 cargo run -p sf-cli -- png out.png                 # capture the screen
 cargo run -p sf-cli -- crop out.png 100 100 400 300 # a region
-cargo run -p sf-cli -- gif out.gif 10 100           # an animated GIF
+cargo run -p sf-cli -- gif out.gif 10 100           # N consecutive captures
+cargo run -p sf-cli -- record out.gif 5 10          # 5 s of real-time recording
+cargo run -p sf-cli -- settings                     # load %APPDATA% settings
 ```
+
+`record` mirrors the C# recorder's split: capture frames are Deflate-compressed as
+they arrive (bounded memory), then exported once with a **global palette** so
+per-frame encoding is a cached color map rather than a full NeuQuant pass — the
+difference between ~7 s and ~2 min for a 3 s take.
 
 Capture (GDI BitBlt, `windows-rs`) → BGRA → `sf-gif` → valid PNG / GIF89a.
 Verified: a live capture encodes to a GIF the third-party `gif` crate decodes

@@ -192,7 +192,9 @@ dependencies = [
  "gif",
  "png",
  "sf-capture",
+ "sf-edit",
  "sf-gif",
+ "sf-settings",
 ]
 
 [[package]]

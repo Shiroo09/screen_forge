@@ -13,6 +13,8 @@ path = "src/main.rs"
 [dependencies]
 sf-gif = { path = "../sf-gif" }
 sf-capture = { path = "../sf-capture" }
+sf-edit = { path = "../sf-edit" }
+sf-settings = { path = "../sf-settings" }
 
 png = "0.17"
 

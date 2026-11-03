@@ -50,7 +50,35 @@ fn run(args: &[String]) -> Result<String, String> {
             write_gif(out, frames, delay_ms)?;
             Ok(format!("wrote {out} ({frames} frames, {delay_ms} ms)"))
         }
-        _ => Err("usage: screenforge <png|gif|crop> <out> ...".to_string()),
+        Some("record") => {
+            // record <out.gif> <seconds> [fps] — real-time capture to a GIF,
+            // dropping frames identical to the last kept one.
+            let out = args.get(1).ok_or("record: missing output path")?;
+            let seconds: f64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3.0);
+            let fps: i32 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(10);
+            let stats = record_gif(out, seconds, fps)?;
+            Ok(format!(
+                "wrote {out} ({} frames kept, {} identical dropped, {:.1}s)",
+                stats.kept, stats.dropped, stats.elapsed_s
+            ))
+        }
+        Some("settings") => {
+            // settings [path] — load settings and print the normalized result.
+            let path = args
+                .get(1)
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(sf_settings::settings_path);
+            let (settings, first_run) = sf_settings::AppSettings::load(&path);
+            Ok(format!(
+                "settings {} (first_run={first_run}): format={:?} gif_fps={} quality={} region_hotkey={:?}",
+                path.display(),
+                settings.output_format,
+                settings.gif.fps,
+                settings.quality,
+                settings.region_hotkey.display(),
+            ))
+        }
+        _ => Err("usage: screenforge <png|gif|crop|record|settings> <out> ...".to_string()),
     }
 }
 
@@ -98,4 +126,98 @@ fn write_gif(path: &str, frames: usize, delay_ms: i32) -> Result<(), String> {
 
     gif.finish();
     Ok(())
+}
+
+/// Result of a real-time recording.
+pub struct RecordStats {
+    pub kept: usize,
+    pub dropped: usize,
+    pub elapsed_s: f64,
+}
+
+/// Real-time screen recording to an animated GIF.
+///
+/// Matches the C# recorder's split: capture is fast (frames are Deflate-compressed
+/// as they arrive, never held raw), and palette/quantization happen once at export
+/// using a **global palette** — so per-frame encoding is a cached color map, not a
+/// full NeuQuant pass per frame.
+fn record_gif(path: &str, seconds: f64, fps: i32) -> Result<RecordStats, String> {
+    let fps = fps.clamp(1, 30);
+    let total_frames = ((seconds.max(0.1)) * fps as f64).round() as usize;
+    let delay_ms = (1000.0 / fps as f64).round() as i32;
+
+    let start = std::time::Instant::now();
+    let mut kept = 0usize;
+    let mut dropped = 0usize;
+    let mut last_kept: Option<Vec<u8>> = None;
+    let mut interval = std::time::Duration::from_millis((1000 / fps) as u64);
+
+    let first = sf_capture::capture_virtual_screen()?;
+    let (w, h) = (first.width, first.height);
+
+    // Capture phase: compress each frame as it arrives. Memory stays bounded to
+    // the compressed size, not frames × 29 MB raw.
+    let mut store = sf_gif::frame_store::FrameStore::new((w * h * 4) as usize);
+    let mut samples: Vec<Vec<u8>> = Vec::new();
+    let mut first = Some(first);
+
+    for i in 0..total_frames {
+        let frame_start = std::time::Instant::now();
+
+        let shot = match first.take() {
+            Some(f) => f,
+            None => sf_capture::capture_virtual_screen()?,
+        };
+
+        let is_same = last_kept
+            .as_ref()
+            .is_some_and(|prev| sf_edit::similarity_of(prev, &shot.bgra) >= 100.0);
+
+        if is_same {
+            dropped += 1;
+        } else {
+            // Keep a few raw frames as palette samples (thinned, capped in the encoder).
+            if samples.len() < 12 {
+                samples.push(shot.bgra.clone());
+            }
+            store.add(&shot.bgra);
+            last_kept = Some(shot.bgra);
+            kept += 1;
+        }
+
+        if i + 1 < total_frames {
+            let spent = frame_start.elapsed();
+            if spent < interval {
+                std::thread::sleep(interval - spent);
+            } else {
+                interval = interval.saturating_mul(2);
+            }
+        }
+    }
+
+    // Export phase: one global palette from the samples, then stream each frame.
+    let file = std::fs::File::create(path).map_err(|e| format!("create {path}: {e}"))?;
+    let writer = std::io::BufWriter::new(file);
+    let mut gif = GifFile::new(writer);
+    gif.set_canvas_size(w, h);
+    gif.maximum_number_color = 256;
+    gif.use_global_palette = true;
+    gif.quantizer_type = sf_gif::QuantizerType::Octree; // fast; Neural is available for quality
+    gif.build_global_palette(&samples);
+
+    let packed = store.drain_packed();
+    for block in packed {
+        // Decode one frame at a time; it is released before the next.
+        let mut bgra = vec![0u8; (w * h * 4) as usize];
+        sf_gif::frame_store::decompress_into(&block, &mut bgra);
+        gif.add_frame(&bgra, Rect { x: 0, y: 0, width: w, height: h }, delay_ms, false);
+    }
+
+    gif.finish();
+
+    Ok(RecordStats {
+        kept,
+        dropped,
+        elapsed_s: start.elapsed().as_secs_f64(),
+    })
 }
