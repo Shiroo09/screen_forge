@@ -1,0 +1,10 @@
+[package]
+name = "sf-edit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Frame/document model and pure edit operations (Rust port of ScreenForge.Gif.Editing and ScreenForge.Editor pure logic)"
+
+[dependencies]
+sf-gif = { path = "../sf-gif" }

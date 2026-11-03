@@ -140,6 +140,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf-edit"
+version = "0.1.0"
+dependencies = [
+ "sf-gif",
+]
+
+[[package]]
 name = "sf-gif"
 version = "0.1.0"
 dependencies = [
