@@ -195,6 +195,7 @@ dependencies = [
  "sf-edit",
  "sf-gif",
  "sf-settings",
+ "windows",
 ]
 
 [[package]]

@@ -18,5 +18,13 @@ sf-settings = { path = "../sf-settings" }
 
 png = "0.17"
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Shell",
+] }
+
 [dev-dependencies]
 gif = "0.13"

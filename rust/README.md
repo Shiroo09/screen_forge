@@ -58,7 +58,13 @@ cargo run -p sf-cli -- crop out.png 100 100 400 300 # a region
 cargo run -p sf-cli -- gif out.gif 10 100           # N consecutive captures
 cargo run -p sf-cli -- record out.gif 5 10          # 5 s of real-time recording
 cargo run -p sf-cli -- settings                     # load %APPDATA% settings
+cargo run -p sf-cli -- run                           # tray shell: Alt+Shift+S captures
 ```
+
+The `run` command is the interactive path: it registers the global hotkey,
+stays alive, and saves a PNG each time the chord fires. Verified by driving it
+(Ctrl+Shift+F9 to avoid the running C# app's chord) — two synthesized presses
+produced two captured PNGs.
 
 `record` mirrors the C# recorder's split: capture frames are Deflate-compressed as
 they arrive (bounded memory), then exported once with a **global palette** so

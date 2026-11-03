@@ -4,6 +4,7 @@
 //! overlay color/geometry decisions. Screen capture itself (GDI/DXGI) and the
 //! low-level hooks stay with the app shell.
 
+pub mod hotkey;
 pub mod key_labels;
 pub mod screen;
 pub mod keys;

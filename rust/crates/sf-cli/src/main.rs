@@ -24,6 +24,14 @@ fn main() -> ExitCode {
     }
 }
 
+fn parse_u32(s: &str) -> Option<u32> {
+    let s = s.trim();
+    match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        Some(hex) => u32::from_str_radix(hex, 16).ok(),
+        None => s.parse().ok(),
+    }
+}
+
 fn run(args: &[String]) -> Result<String, String> {
     match args.first().map(String::as_str) {
         Some("png") => {
@@ -62,6 +70,16 @@ fn run(args: &[String]) -> Result<String, String> {
                 stats.kept, stats.dropped, stats.elapsed_s
             ))
         }
+        Some("run") => {
+            // run [seconds] — register the capture hotkey (Alt+Shift+S), stay in
+            // the tray, and save a PNG each time it fires. Proves the interactive
+            // path end to end: global hotkey -> capture -> file + notification.
+            let seconds: f64 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+            // Optional hex modifiers + virtual-key, e.g. "run 0 6 0x78" (Ctrl+Shift+F9).
+            let mods: u32 = args.get(2).and_then(|s| parse_u32(s)).unwrap_or(0x1 | 0x4);
+            let vk: u32 = args.get(3).and_then(|s| parse_u32(s)).unwrap_or(0x53);
+            run_tray(seconds, mods, vk)
+        }
         Some("settings") => {
             // settings [path] — load settings and print the normalized result.
             let path = args
@@ -78,7 +96,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|settings> <out> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|run|settings> ...".to_string()),
     }
 }
 
@@ -220,4 +238,56 @@ fn record_gif(path: &str, seconds: f64, fps: i32) -> Result<RecordStats, String>
         dropped,
         elapsed_s: start.elapsed().as_secs_f64(),
     })
+}
+
+/// Interactive shell: registers the capture hotkey and saves a PNG on each press.
+///
+/// `seconds` 0 means run until the process is killed; a positive value exits after
+/// that many seconds, which makes it usable from a test.
+#[cfg(windows)]
+fn run_tray(seconds: f64, modifiers: u32, vk: u32) -> Result<String, String> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    let count = Arc::new(AtomicU32::new(0));
+    let out_dir = std::env::temp_dir().join("sf-out");
+    std::fs::create_dir_all(&out_dir).ok();
+
+    let count_cb = Arc::clone(&count);
+    let dir_cb = out_dir.clone();
+
+    let reg = sf_capture::hotkey::register(modifiers, vk, move || {
+        let n = count_cb.fetch_add(1, Ordering::SeqCst) + 1;
+        match sf_capture::capture_virtual_screen() {
+            Ok(shot) => {
+                let path = dir_cb.join(format!("hotkey-{n}.png"));
+                match write_png(path.to_str().unwrap_or("out.png"), shot.width, shot.height, &shot.bgra) {
+                    // Log, don't pop a modal: the callback runs on the hotkey
+                    // thread and a blocking dialog would stall further hotkeys.
+                    Ok(()) => eprintln!("hotkey {n}: saved {}", path.display()),
+                    Err(e) => eprintln!("hotkey {n}: png failed: {e}"),
+                }
+            }
+            Err(e) => eprintln!("hotkey {n}: capture failed: {e}"),
+        }
+    })?;
+
+    eprintln!("ScreenForge ready — press Alt+Shift+S to capture");
+
+    if seconds > 0.0 {
+        std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
+        let n = count.load(Ordering::SeqCst);
+        reg.stop();
+        Ok(format!("ran {seconds}s, {n} capture(s) triggered"))
+    } else {
+        // Stay alive; the hotkey thread owns the message loop.
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn run_tray(_seconds: f64, _modifiers: u32, _vk: u32) -> Result<String, String> {
+    Err("the tray shell is only supported on Windows".to_string())
 }
