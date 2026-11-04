@@ -13,6 +13,7 @@ pub mod tray;
 pub mod selection;
 pub mod presenter_window;
 pub mod settings_window;
+pub mod subtitle_window;
 pub mod key_labels;
 pub mod screen;
 pub mod keys;

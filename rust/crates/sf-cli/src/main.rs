@@ -206,6 +206,29 @@ fn run(args: &[String]) -> Result<String, String> {
             write_by_extension(output, w, h, &composed)?;
             Ok(format!("removebg: {w}x{h} konu kesildi -> {output}"))
         }
+        Some("subtitle") => {
+            // subtitle <text> — show a live-subtitle box over the screen (Esc çıkış).
+            let text = args[1..].join(" ");
+            let (settings, _) = sf_settings::AppSettings::load(&sf_settings::settings_path());
+            let (vx, vy, vw, vh) = sf_capture::virtual_screen_bounds();
+            let _ = (vx, vy);
+            let screen = (0, 0, vw, vh);
+            let style = sf_capture::subtitle_window::SubtitleStyle {
+                back: sf_capture::subtitle_window::SubtitleStyle::parse_color(&settings.subtitle.back_color, [0x10, 0x12, 0x18, 0xFF]),
+                text: sf_capture::subtitle_window::SubtitleStyle::parse_color(&settings.subtitle.text_color, [0xFF, 0xFF, 0xFF, 0xFF]),
+                border: sf_capture::subtitle_window::SubtitleStyle::parse_color(&settings.subtitle.border_color, [0xFF, 0xFF, 0xFF, 0xFF]),
+                opacity: settings.subtitle.opacity as f32,
+                border_thickness: settings.subtitle.border_thickness as f32,
+            };
+            // Use the configured box if set, else a centered default.
+            let rect = if settings.subtitle.has_box() {
+                (settings.subtitle.box_x, settings.subtitle.box_y, settings.subtitle.box_w, settings.subtitle.box_h)
+            } else {
+                (screen.0 + vw / 6, screen.1 + vh * 4 / 5, vw * 2 / 3, 70)
+            };
+            sf_capture::subtitle_window::run(rect, style, text);
+            Ok("altyazı kapandı".to_string())
+        }
         Some("presenter") => {
             // presenter — live drawing overlay (Esc to exit; 1=pen 2=laser 3=spotlight).
             eprintln!("sunum katmanı açılıyor — Esc ile çık, 1=kalem 2=lazer 3=spotlight");
@@ -291,7 +314,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|gifedit|annotate|reverse|translate|removebg|update|presenter|gui|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|gifedit|annotate|reverse|translate|removebg|update|presenter|subtitle|gui|run|settings> ...".to_string()),
     }
 }
 
