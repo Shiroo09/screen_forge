@@ -18,6 +18,7 @@ sf-edit = { path = "../sf-edit" }
 sf-draw = { path = "../sf-draw" }
 sf-net = { path = "../sf-net" }
 sf-media = { path = "../sf-media" }
+sf-record = { path = "../sf-record" }
 sf-overlay = { path = "../sf-overlay" }
 
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }

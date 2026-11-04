@@ -11,6 +11,7 @@
 pub mod blur;
 pub mod canvas;
 pub mod model;
+pub mod presenter;
 pub mod shapes;
 pub mod text;
 

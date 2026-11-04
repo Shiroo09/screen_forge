@@ -3195,6 +3195,7 @@ dependencies = [
  "sf-media",
  "sf-net",
  "sf-overlay",
+ "sf-record",
  "sf-settings",
  "windows",
 ]
