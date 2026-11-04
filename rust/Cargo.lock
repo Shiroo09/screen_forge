@@ -959,6 +959,7 @@ dependencies = [
  "sf-edit",
  "sf-gif",
  "sf-media",
+ "sf-net",
  "sf-record",
  "sf-settings",
  "windows",

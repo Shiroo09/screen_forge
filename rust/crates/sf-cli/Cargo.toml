@@ -18,6 +18,7 @@ sf-draw = { path = "../sf-draw" }
 sf-record = { path = "../sf-record" }
 sf-settings = { path = "../sf-settings" }
 sf-media = { path = "../sf-media" }
+sf-net = { path = "../sf-net" }
 
 png = "0.17"
 image = { version = "0.25", default-features = false, features = ["jpeg", "webp", "png"] }

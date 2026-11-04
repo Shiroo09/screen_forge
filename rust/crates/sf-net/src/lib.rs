@@ -6,6 +6,7 @@ pub mod http_upload;
 pub mod lang_router;
 pub mod lens;
 pub mod proto;
+pub mod reverse_http;
 pub mod reverse_search;
 pub mod upload;
 

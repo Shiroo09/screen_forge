@@ -115,6 +115,17 @@ fn run(args: &[String]) -> Result<String, String> {
             write_by_extension(out, shot.width, shot.height, &shot.bgra)?;
             Ok(format!("selected ({x},{y},{w},{h}) -> wrote {out}"))
         }
+        Some("reverse") => {
+            // reverse <image> [yandex|lens] — print a reverse-search URL.
+            let path = args.get(1).ok_or("reverse: missing image path")?;
+            let engine = match args.get(2).map(String::as_str) {
+                Some("lens") => sf_net::reverse_http::Engine::GoogleLens,
+                _ => sf_net::reverse_http::Engine::Yandex,
+            };
+            let bytes = std::fs::read(path).map_err(|e| format!("read {path}: {e}"))?;
+            let url = sf_net::reverse_http::search_url(&bytes, engine)?;
+            Ok(format!("reverse search URL: {url}"))
+        }
         Some("run") => {
             // run [seconds] — register the capture hotkey (Alt+Shift+S), stay in
             // the tray, and save a PNG each time it fires. Proves the interactive
@@ -158,7 +169,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|annotate|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|annotate|reverse|run|settings> ...".to_string()),
     }
 }
 
