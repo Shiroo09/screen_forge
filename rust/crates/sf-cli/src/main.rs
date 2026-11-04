@@ -80,6 +80,16 @@ fn run(args: &[String]) -> Result<String, String> {
             write_png(&out, shot.width, shot.height, &shot.bgra)?;
             Ok(format!("copied to clipboard + wrote {out} ({}x{})", shot.width, shot.height))
         }
+        Some("select") => {
+            // select <out.png> — show the region picker, then save the selection.
+            let out = args.get(1).ok_or("select: missing output path")?;
+            let rect = sf_capture::overlay_window::pick_region()
+                .ok_or("selection cancelled or too small")?;
+            let (x, y, w, h) = rect;
+            let shot = sf_capture::capture_region(x, y, w, h)?;
+            write_png(out, shot.width, shot.height, &shot.bgra)?;
+            Ok(format!("selected ({x},{y},{w},{h}) -> wrote {out}"))
+        }
         Some("run") => {
             // run [seconds] — register the capture hotkey (Alt+Shift+S), stay in
             // the tray, and save a PNG each time it fires. Proves the interactive
@@ -106,7 +116,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|shot|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|shot|select|run|settings> ...".to_string()),
     }
 }
 
