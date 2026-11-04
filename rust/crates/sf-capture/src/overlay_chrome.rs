@@ -23,12 +23,27 @@ pub enum ModeChoice {
     FullScreen,
 }
 
+/// A button in the action bar.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Action {
+    Save,
+    Copy,
+    Upload,
+    Translate,
+    Cancel,
+}
+
 /// Something the user can click in the overlay chrome.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Hit {
     Mode(ModeChoice),
     Tool(Tool),
     Color(u32),
+    /// Mantıksal piksel cinsinden çizgi kalınlığı.
+    Width(u32),
+    /// Dikdörtgen/elips için dolgu anahtarı; tıklamanın ürettiği yeni değer.
+    Fill(bool),
+    Action(Action),
 }
 
 /// One clickable region: where it is (client coordinates) and what it does.
@@ -43,6 +58,10 @@ const TEXT: u32 = 0xF2F4F8;
 const TEXT_DIM: u32 = 0x9AA4B8;
 const ACCENT: u32 = 0xEA6F12;
 const WHITE: u32 = 0xF2F4F8;
+const TOAST_INK: u32 = 0xEAF0F7;
+
+/// Stroke widths offered by the option bar, in logical pixels.
+const WIDTHS: [u32; 4] = [2, 4, 8, 12];
 
 /// The eight-colour palette offered by the swatch row, in strip order.
 const PALETTE: [u32; 8] = [
@@ -336,8 +355,7 @@ pub fn draw_tool_strip(
     active_tool: Tool,
     active_color: u32,
 ) -> Vec<Clickable> {
-    let (rx, rw) = (region.0, region.2);
-
+    let panel_rect = tool_strip_rect(anchor_x, client_w, client_h, region, scale);
     let pad = px(scale, 2.0);
     let grip_w = scaled(scale, 10);
     let btn = scaled(scale, 36);
@@ -347,17 +365,8 @@ pub fn draw_tool_strip(
     let col_w = swatch * 4 + sw_gap * 3;
     // The 2x4 swatch row is wider than the button column, and both must fit.
     let content_w = btn.max(col_w);
-    let panel_w = pad + grip_w + content_w + pad;
 
     let btn_col_h = btn * 10 + gap * 9;
-    let color_block = scaled(scale, 6) + swatch * 2 + sw_gap;
-    let panel_h = pad + btn_col_h + color_block + pad;
-    let panel_rect = rect_at(
-        panel_x(rx, rw, anchor_x, client_w, panel_w, scale),
-        (client_h - panel_h) / 2,
-        panel_w,
-        panel_h,
-    );
     let col_x = panel_rect.left + pad + grip_w + (content_w - btn) / 2;
 
     unsafe {
@@ -433,6 +442,36 @@ pub fn draw_tool_strip(
         let _ = RestoreDC(hdc, saved);
         out
     }
+}
+
+/// The tool strip's rectangle. Exposed so the option bar can sit directly
+/// beneath it without duplicating the layout arithmetic.
+pub fn tool_strip_rect(
+    anchor_x: i32,
+    client_w: i32,
+    client_h: i32,
+    region: (i32, i32, i32, i32),
+    scale: f32,
+) -> RECT {
+    let (rx, rw) = (region.0, region.2);
+    let pad = px(scale, 2.0);
+    let grip_w = scaled(scale, 10);
+    let btn = scaled(scale, 36);
+    let gap = scaled(scale, 1);
+    let swatch = scaled(scale, 18);
+    let sw_gap = scaled(scale, 4);
+    let col_w = swatch * 4 + sw_gap * 3;
+    let content_w = btn.max(col_w);
+    let panel_w = pad + grip_w + content_w + pad;
+    let btn_col_h = btn * 10 + gap * 9;
+    let color_block = scaled(scale, 6) + swatch * 2 + sw_gap;
+    let panel_h = pad + btn_col_h + color_block + pad;
+    rect_at(
+        panel_x(rx, rw, anchor_x, client_w, panel_w, scale),
+        (client_h - panel_h) / 2,
+        panel_w,
+        panel_h,
+    )
 }
 
 /// Places the strip beside the selection, flipping to the left when the right
@@ -590,6 +629,340 @@ pub fn mode_glyph(hdc: HDC, mode: ModeChoice, rect: RECT, color: COLORREF, scale
             }
         }
     }
+}
+
+/// Drawing phase: the thickness / fill option bar under the tool strip.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_option_bar(
+    hdc: HDC,
+    anchor_x: i32,
+    top: i32,
+    client_w: i32,
+    client_h: i32,
+    scale: f32,
+    stroke_width: u32,
+    filled: bool,
+) -> Vec<Clickable> {
+    let pad = px(scale, 5.0);
+    let gap = px(scale, 6.0);
+    let chip = scaled(scale, 26);
+    let radius = px(scale, 5.0);
+    let bar_w = scaled(scale, 16);
+    let sep_h = scaled(scale, 20);
+    let toggle_w = scaled(scale, 62);
+    let font = unsafe { segoe(12.0 * scale, FW_NORMAL.0 as i32) };
+
+    unsafe {
+        let saved = SaveDC(hdc);
+        SetBkMode(hdc, TRANSPARENT);
+
+        let label = "Kalınlık";
+        let s = Sel::new(hdc, &font);
+        let label_w = text_w(hdc, label);
+        drop(s);
+
+        // Araç şeridinin hemen altındaki bant; konum çağırandan geliyor ki
+        // şerit seçimin soluna düştüğünde de hizalı kalsın.
+        let content = pad * 2 + label_w + chip * 4 + toggle_w + gap * 6 + 1;
+        let x = (anchor_x - content / 2).clamp(0, (client_w - content).max(0));
+        let y = (top + px(scale, 8.0)).clamp(0, (client_h - (chip + pad * 2)).max(0));
+        let panel_rect = rect_at(x, y, content, chip + pad * 2);
+
+        chrome(hdc, panel_rect, px(scale, 6.0), Some(cref(SURFACE)), Some(cref(BORDER)));
+
+        let row_top = panel_rect.top + pad;
+        let label_rect = rect_at(panel_rect.left + pad, row_top, label_w, chip);
+        let s = Sel::new(hdc, &font);
+        SetTextColor(hdc, cref(TEXT_DIM));
+        text_center(hdc, label_rect, label);
+        drop(s);
+
+        let mut out = Vec::with_capacity(5);
+        let mut x = label_rect.right + gap;
+        for w in WIDTHS {
+            let r = rect_at(x, row_top, chip, chip);
+            let is_active = w == stroke_width;
+            let fill = if is_active { Some(cref(ACCENT)) } else { None };
+            let border = if is_active { None } else { Some(cref(BORDER)) };
+            chrome(hdc, r, radius, fill, border);
+
+            // Çubuğun kalınlığı seçilen değerin kendisi.
+            let thick = scaled(scale, w as i32);
+            let bar = rect_at(
+                r.left + (chip - bar_w) / 2,
+                r.top + (chip - thick) / 2,
+                bar_w,
+                thick,
+            );
+            let ink = if is_active { cref(WHITE) } else { cref(TEXT) };
+            let brush = GdiObj(CreateSolidBrush(ink).into());
+            let pen = GdiObj(CreatePen(PS_NULL, 1, ink).into());
+            let _b = Sel::new(hdc, &brush);
+            let _p = Sel::new(hdc, &pen);
+            let _ = Rectangle(hdc, bar.left, bar.top, bar.right, bar.bottom);
+            drop(_p);
+            drop(_b);
+
+            out.push(Clickable { rect: r, hit: Hit::Width(w) });
+            x = r.right + gap;
+        }
+
+        // Ayırıcı: dikey 1px çizgi, iki yanında da 6px boşluk.
+        let mid = panel_rect.top + panel_rect.bottom;
+        let p = GdiObj(CreatePen(PS_SOLID, 1, cref(BORDER)).into());
+        let _pen = Sel::new(hdc, &p);
+        let _ = MoveToEx(hdc, x, (mid - sep_h) / 2, None);
+        let _ = LineTo(hdc, x, (mid + sep_h) / 2);
+        drop(_pen);
+        x += 1 + gap;
+
+        let r = rect_at(x, row_top, toggle_w, chip);
+        let fill = if filled { Some(cref(ACCENT)) } else { None };
+        let border = if filled { None } else { Some(cref(BORDER)) };
+        chrome(hdc, r, radius, fill, border);
+        let s = Sel::new(hdc, &font);
+        SetTextColor(hdc, if filled { cref(WHITE) } else { cref(TEXT) });
+        text_center(hdc, r, "Dolgu");
+        drop(s);
+        // Tıklama yeni değeri taşır, mevcut olanı değil.
+        out.push(Clickable { rect: r, hit: Hit::Fill(!filled) });
+
+        let _ = RestoreDC(hdc, saved);
+        out
+    }
+}
+
+fn action_label(action: Action) -> &'static str {
+    match action {
+        Action::Save => "Kaydet",
+        Action::Copy => "Kopyala",
+        Action::Upload => "Buluta yükle",
+        Action::Translate => "Çevir",
+        Action::Cancel => "İptal",
+    }
+}
+
+/// Phase end: the action bar pinned to the bottom centre of the client area.
+pub fn draw_action_bar(hdc: HDC, client_w: i32, client_h: i32, scale: f32) -> Vec<Clickable> {
+    let pad = px(scale, 6.0);
+    let chip_h = scaled(scale, 34);
+    let chip_pad = scaled(scale, 12);
+    let gap = px(scale, 6.0);
+    let glyph = scaled(scale, 18);
+    let inner_gap = px(scale, 7.0);
+    let radius = px(scale, 6.0);
+    let font = unsafe { segoe(13.0 * scale, FW_NORMAL.0 as i32) };
+
+    let actions =
+        [Action::Save, Action::Copy, Action::Upload, Action::Translate, Action::Cancel];
+
+    unsafe {
+        let saved = SaveDC(hdc);
+        SetBkMode(hdc, TRANSPARENT);
+
+        // Chip widths depend on the labels, so measure before placing anything.
+        let chip_w: Vec<i32> = {
+            let s = Sel::new(hdc, &font);
+            let w = actions
+                .iter()
+                .map(|a| chip_pad * 2 + glyph + inner_gap + text_w(hdc, action_label(*a)))
+                .collect();
+            drop(s);
+            w
+        };
+
+        let content: i32 =
+            chip_w.iter().sum::<i32>() + gap * (actions.len() as i32 - 1);
+        let panel_w = content + pad * 2;
+        let panel_h = chip_h + pad * 2;
+        let panel_rect = rect_at(
+            ((client_w - panel_w) / 2).max(0),
+            client_h - scaled(scale, 24) - panel_h,
+            panel_w,
+            panel_h,
+        );
+
+        chrome(hdc, panel_rect, radius, Some(cref(SURFACE)), Some(cref(BORDER)));
+
+        let row_top = panel_rect.top + pad;
+        let mut out = Vec::with_capacity(actions.len());
+        let mut x = panel_rect.left + pad;
+        for (a, w) in actions.iter().zip(&chip_w) {
+            let r = rect_at(x, row_top, *w, chip_h);
+            let primary = *a == Action::Save;
+            let fill = if primary { Some(cref(ACCENT)) } else { None };
+            let border = if primary { None } else { Some(cref(BORDER)) };
+            chrome(hdc, r, radius, fill, border);
+
+            let ink = if primary { cref(WHITE) } else { cref(TEXT) };
+            let g = rect_at(r.left + chip_pad, r.top + (chip_h - glyph) / 2, glyph, glyph);
+            action_glyph(hdc, *a, g, ink, scale);
+
+            let label_rect =
+                rect_at(g.right + inner_gap, row_top, r.right - g.right - inner_gap - chip_pad, chip_h);
+            let s = Sel::new(hdc, &font);
+            SetTextColor(hdc, ink);
+            text_center(hdc, label_rect, action_label(*a));
+            drop(s);
+
+            out.push(Clickable { rect: r, hit: Hit::Action(*a) });
+            x = r.right + gap;
+        }
+
+        let _ = RestoreDC(hdc, saved);
+        out
+    }
+}
+
+/// Line-art glyph for an action-bar chip.
+fn action_glyph(hdc: HDC, action: Action, rect: RECT, color: COLORREF, scale: f32) {
+    let w = (1.8 * scale).round().max(1.0) as i32;
+    let (l, t, r, b) = (rect.left, rect.top, rect.right, rect.bottom);
+    let (cx, cy) = ((l + r) / 2, (t + b) / 2);
+    let head = scaled(scale, 4);
+
+    unsafe {
+        let pen = GdiObj(CreatePen(PS_SOLID, w, color).into());
+        let hollow = GdiObj(GetStockObject(HOLLOW_BRUSH));
+        let _p = Sel::new(hdc, &pen);
+        let _b = Sel::new(hdc, &hollow);
+
+        match action {
+            Action::Save => {
+                // Aşağı ok ve altındaki taban çizgisi.
+                let base = b - scaled(scale, 4);
+                let _ = MoveToEx(hdc, cx, t, None);
+                let _ = LineTo(hdc, cx, base);
+                let _ = MoveToEx(hdc, cx - head, base - head, None);
+                let _ = LineTo(hdc, cx, base);
+                let _ = LineTo(hdc, cx + head, base - head);
+                let _ = MoveToEx(hdc, l, b, None);
+                let _ = LineTo(hdc, r, b);
+            }
+            Action::Copy => {
+                // İki kaydırılmış yuvarlak dikdörtgen.
+                let off = scaled(scale, 3);
+                let rad = scaled(scale, 2);
+                let _ = RoundRect(hdc, l, t, r - off, b - off, rad, rad);
+                let _ = RoundRect(hdc, l + off, t + off, r, b, rad, rad);
+            }
+            Action::Upload => {
+                // Bulut dış çizgisi artı içindeki yukarı ok.
+                let base = cy + scaled(scale, 4);
+                let bump = scaled(scale, 5);
+                let _ = Ellipse(hdc, l, base - bump, l + bump * 2, base + bump);
+                let _ = Ellipse(hdc, cx - bump, base - bump - scaled(scale, 3), cx + bump, base + bump - scaled(scale, 1));
+                let _ = Ellipse(hdc, r - bump * 2, base - bump, r, base + bump);
+                let _ = MoveToEx(hdc, l + scaled(scale, 2), base + bump, None);
+                let _ = LineTo(hdc, r - scaled(scale, 2), base + bump);
+
+                let _ = MoveToEx(hdc, cx, base - scaled(scale, 2), None);
+                let _ = LineTo(hdc, cx, t);
+                let _ = MoveToEx(hdc, cx - head, t + head, None);
+                let _ = LineTo(hdc, cx, t);
+                let _ = LineTo(hdc, cx + head, t + head);
+            }
+            Action::Translate => {
+                // "A" harfi yanında küçük kare.
+                let f = segoe(11.0 * scale, FW_BOLD.0 as i32);
+                let s = Sel::new(hdc, &f);
+                SetTextColor(hdc, color);
+                text_center(hdc, rect_at(l, t, (r - l) * 3 / 5, b - t), "A");
+                drop(s);
+                let sq = scaled(scale, 7);
+                let _ = Rectangle(hdc, r - sq, b - sq, r, b);
+            }
+            Action::Cancel => {
+                // İki çizgiden oluşan X.
+                let _ = MoveToEx(hdc, l, t, None);
+                let _ = LineTo(hdc, r, b);
+                let _ = MoveToEx(hdc, r, t, None);
+                let _ = LineTo(hdc, l, b);
+            }
+        }
+    }
+}
+
+/// Selection size badge; anchored top-left and clamped inside the client area.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_size_badge(
+    hdc: HDC,
+    x: i32,
+    y: i32,
+    client_w: i32,
+    client_h: i32,
+    scale: f32,
+    w: i32,
+    h: i32,
+) -> RECT {
+    let pad_x = scaled(scale, 8);
+    let pad_y = scaled(scale, 3);
+    let font = unsafe { segoe(12.0 * scale, FW_NORMAL.0 as i32) };
+    let text = format!("{w} × {h}");
+
+    let saved = unsafe { SaveDC(hdc) };
+    let measured = unsafe {
+        SetBkMode(hdc, TRANSPARENT);
+        let s = Sel::new(hdc, &font);
+        let m = text_w(hdc, &text);
+        drop(s);
+        m
+    };
+    let _ = unsafe { RestoreDC(hdc, saved) };
+
+    let bw = measured + pad_x * 2;
+    let bh = scaled(scale, 12) + pad_y * 2;
+    let r = rect_at(
+        x.clamp(0, (client_w - bw).max(0)),
+        y.clamp(0, (client_h - bh).max(0)),
+        bw,
+        bh,
+    );
+
+    let saved = unsafe { SaveDC(hdc) };
+    unsafe {
+        SetBkMode(hdc, TRANSPARENT);
+        chrome(hdc, r, px(scale, 4.0), Some(cref(SURFACE)), None);
+        let s = Sel::new(hdc, &font);
+        SetTextColor(hdc, cref(WHITE));
+        text_center(hdc, r, &text);
+        drop(s);
+        let _ = RestoreDC(hdc, saved);
+    }
+    r
+}
+
+/// Feedback banner: draws `text` centred on `anchor_x` with its top at `y`.
+pub fn draw_toast(hdc: HDC, anchor_x: i32, client_w: i32, y: i32, scale: f32, text: &str) -> RECT {
+    let pad_x = scaled(scale, 14);
+    let pad_y = scaled(scale, 10);
+    let font = unsafe { segoe(13.0 * scale, FW_NORMAL.0 as i32) };
+
+    let saved = unsafe { SaveDC(hdc) };
+    let measured = unsafe {
+        SetBkMode(hdc, TRANSPARENT);
+        let s = Sel::new(hdc, &font);
+        let m = text_w(hdc, text);
+        drop(s);
+        m
+    };
+    let _ = unsafe { RestoreDC(hdc, saved) };
+
+    let w = measured + pad_x * 2;
+    let h = scaled(scale, 13) + pad_y * 2;
+    let r = rect_at((anchor_x - w / 2).clamp(0, (client_w - w).max(0)), y, w, h);
+
+    let saved = unsafe { SaveDC(hdc) };
+    unsafe {
+        SetBkMode(hdc, TRANSPARENT);
+        chrome(hdc, r, px(scale, 8.0), Some(cref(SURFACE)), Some(cref(BORDER)));
+        let s = Sel::new(hdc, &font);
+        SetTextColor(hdc, cref(TOAST_INK));
+        text_center(hdc, r, text);
+        drop(s);
+        let _ = RestoreDC(hdc, saved);
+    }
+    r
 }
 
 #[cfg(test)]

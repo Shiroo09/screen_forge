@@ -165,21 +165,27 @@ pub const LINE_WIDTH: f32 = 2.5;
 
 /// Draws one shape with the standard stroke width.
 pub fn render(canvas: &mut Canvas, shape: &Shape) {
+    render_with(canvas, shape, LINE_WIDTH);
+}
+
+/// Draws one shape with an explicit stroke width. `Highlight`, `Step`, `Text`
+/// and `Blur` carry their own sizing and ignore `width`.
+pub fn render_with(canvas: &mut Canvas, shape: &Shape, width: f32) {
     match shape {
         Shape::Rect { x, y, w, h, color } => {
-            shapes::draw_rect(canvas, *x, *y, *w, *h, Stroke::new(*color, LINE_WIDTH));
+            shapes::draw_rect(canvas, *x, *y, *w, *h, Stroke::new(*color, width));
         }
         Shape::Ellipse { x, y, w, h, color } => {
-            shapes::draw_ellipse(canvas, *x, *y, *w, *h, Stroke::new(*color, LINE_WIDTH));
+            shapes::draw_ellipse(canvas, *x, *y, *w, *h, Stroke::new(*color, width));
         }
         Shape::Arrow { x0, y0, x1, y1, color } => {
-            shapes::draw_arrow(canvas, *x0, *y0, *x1, *y1, Stroke::new(*color, LINE_WIDTH));
+            shapes::draw_arrow(canvas, *x0, *y0, *x1, *y1, Stroke::new(*color, width));
         }
         Shape::Line { x0, y0, x1, y1, color } => {
-            shapes::draw_stroke(canvas, *x0, *y0, *x1, *y1, Stroke::new(*color, LINE_WIDTH));
+            shapes::draw_stroke(canvas, *x0, *y0, *x1, *y1, Stroke::new(*color, width));
         }
         Shape::Pen { points, color } => {
-            shapes::draw_stroke_path(canvas, points, Stroke::new(*color, LINE_WIDTH));
+            shapes::draw_stroke_path(canvas, points, Stroke::new(*color, width));
         }
         Shape::Highlight { points, color, width } => {
             crate::highlight::draw_highlight(canvas, points, *color, *width);

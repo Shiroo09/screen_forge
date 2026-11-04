@@ -21,6 +21,6 @@ pub use blur::{apply_mask, MaskKind};
 pub use canvas::{Canvas, Rgba};
 pub use crop::{clamp_rect, crop_bgra};
 pub use highlight::draw_highlight;
-pub use model::{render, render_all, Shape, Tool, LINE_WIDTH};
+pub use model::{render, render_all, render_with, Shape, Tool, LINE_WIDTH};
 pub use text::{draw_text, measure};
 pub use shapes::{draw_arrow, draw_ellipse, draw_rect, draw_step, draw_stroke, Stroke};

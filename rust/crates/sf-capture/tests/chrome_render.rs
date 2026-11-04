@@ -4,7 +4,10 @@
 
 #![cfg(windows)]
 
-use sf_capture::overlay_chrome::{draw_mode_bar, draw_tool_strip, ModeChoice};
+use sf_capture::overlay_chrome::{
+    draw_action_bar, draw_mode_bar, draw_option_bar, draw_size_badge, draw_toast, draw_tool_strip,
+    Action, Hit, ModeChoice,
+};
 use sf_draw::model::Tool;
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, BITMAPINFO,
@@ -108,6 +111,79 @@ fn tool_strip_paints_panel_and_swatches() {
     let surface = count(&px, (0x1F, 0x24, 0x30));
     println!("surface={surface}");
     assert!(surface > 1000, "strip panel fill missing (surface={surface})");
+}
+
+#[test]
+fn option_bar_paints_panel_and_five_chips() {
+    let hits = std::cell::RefCell::new(Vec::new());
+    let px = render(|dc| {
+        *hits.borrow_mut() = draw_option_bar(dc, W / 2, 40, W, H, 1.0, 4, false);
+    });
+    println!("--- option bar ---\n{}", map(&px));
+    let surface = count(&px, (0x1F, 0x24, 0x30));
+    let hits = hits.into_inner();
+    println!("surface={surface} hits={}", hits.len());
+    assert!(surface > 500, "option bar panel fill missing (surface={surface})");
+    assert_eq!(hits.len(), 5, "4 width chips + fill toggle");
+    assert_eq!(hits[4].hit, Hit::Fill(true), "clicking an unfilled toggle turns it on");
+    // Panel gerçek istemci için ölçülüyor; 220px test tuvalinden geniş olabilir,
+    // bu yüzden yalnızca sıra ve çakışmama doğrulanır (draw_mode_bar ile aynı).
+    for w in 0..4 {
+        assert_eq!(hits[w].hit, Hit::Width([2, 4, 8, 12][w]));
+    }
+    for c in hits.windows(2) {
+        assert!(c[0].rect.right <= c[1].rect.left, "option chips overlap");
+    }
+    // Konum çağırandan gelir: panel `top + 8` boşlukla başlar.
+    // Çip, panelin `pad` kadar içinde: panel top=48, çip top=53.
+    assert_eq!(hits[0].rect.top, 53, "option bar ignores the caller's top");
+}
+
+#[test]
+fn action_bar_paints_panel_and_five_actions() {
+    let hits = std::cell::RefCell::new(Vec::new());
+    let px = render(|dc| {
+        *hits.borrow_mut() = draw_action_bar(dc, W, H, 1.0);
+    });
+    println!("--- action bar ---\n{}", map(&px));
+    let surface = count(&px, (0x1F, 0x24, 0x30));
+    let hits = hits.into_inner();
+    println!("surface={surface} hits={}", hits.len());
+    assert!(surface > 500, "action bar panel fill missing (surface={surface})");
+    assert_eq!(hits.len(), 5);
+    assert_eq!(hits[0].hit, Hit::Action(Action::Save));
+    assert_eq!(hits[4].hit, Hit::Action(Action::Cancel));
+    for c in hits.windows(2) {
+        assert!(c[0].rect.right < c[1].rect.left, "action chips overlap");
+    }
+    // Alt kenara 24*scale içeride: çipler istemci yüksekliğinin içinde kalmalı.
+    assert!(hits[0].rect.top >= 0 && hits[4].rect.bottom <= H, "action bar ran off");
+}
+
+#[test]
+fn size_badge_paints_its_rect() {
+    let rect = std::cell::Cell::new(windows::Win32::Foundation::RECT::default());
+    let px = render(|dc| {
+        rect.set(draw_size_badge(dc, 4, 4, W, H, 1.0, 300, 200));
+    });
+    let surface = count(&px, (0x1F, 0x24, 0x30));
+    let r = rect.get();
+    println!("surface={surface} rect={r:?}");
+    assert!(surface > 300, "size badge fill missing (surface={surface})");
+    assert!(r.right <= W && r.bottom <= H, "badge left the client area: {r:?}");
+}
+
+#[test]
+fn toast_paints_and_clamps_inside_the_client() {
+    let rect = std::cell::Cell::new(windows::Win32::Foundation::RECT::default());
+    let px = render(|dc| {
+        rect.set(draw_toast(dc, W / 2, W, 20, 1.0, "Kopyalandı"));
+    });
+    let surface = count(&px, (0x1F, 0x24, 0x30));
+    let r = rect.get();
+    println!("surface={surface} rect={r:?}");
+    assert!(surface > 300, "toast fill missing (surface={surface})");
+    assert!(r.left >= 0 && r.right <= W, "toast left the client area: {r:?}");
 }
 
 #[test]

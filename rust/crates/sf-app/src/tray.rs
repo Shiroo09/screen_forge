@@ -126,12 +126,17 @@ fn capture_once(
         return;
     };
 
-    // Shapes are in virtual-screen coords; shift into the crop.
+    // Shapes are in virtual-screen coords; shift into the crop. The overlay's
+    // option bar picked the stroke width, so honour it here.
     {
         use sf_draw::canvas::Canvas;
         let mut canvas = Canvas::new(&mut shot.bgra, shot.width, shot.height);
         for shape in &edit.shapes {
-            sf_draw::model::render(&mut canvas, &shape.translate(-(x as f32), -(y as f32)));
+            sf_draw::model::render_with(
+                &mut canvas,
+                &shape.translate(-(x as f32), -(y as f32)),
+                edit.stroke_width,
+            );
         }
     }
 
@@ -145,10 +150,46 @@ fn capture_once(
         sf_settings::ImageFormat::Webp => "webp",
     };
     let path = out_dir.join(format!("ScreenForge-{n}.{ext}"));
-    match write_image(&path, &shot, format, quality) {
-        Ok(()) => eprintln!("yakalama {n}: kaydedildi {}", path.display()),
-        Err(e) => eprintln!("yakalama {n}: hata: {e}"),
+
+    use sf_capture::overlay_chrome::Action;
+    match edit.action {
+        // "Çevir" bu pencerede OCR akışı olmadığı için kaydedip pencereyi açar.
+        Some(Action::Translate) => {
+            if let Err(e) = write_image(&path, &shot, format, quality) {
+                eprintln!("yakalama {n}: hata: {e}");
+                return;
+            }
+            eprintln!("yakalama {n}: kaydedildi {} · çeviri için pencere açılıyor", path.display());
+            open_translate_window();
+        }
+        // "Buluta yükle" diske yazıp Litterbox'a gönderir; bağlantı stdout'a düşer.
+        Some(Action::Upload) => {
+            if let Err(e) = write_image(&path, &shot, format, quality) {
+                eprintln!("yakalama {n}: hata: {e}");
+                return;
+            }
+            match sf_net::http_upload::upload_file(&path.to_string_lossy()) {
+                Ok(url) => eprintln!("yakalama {n}: yüklendi {url}"),
+                Err(e) => eprintln!("yakalama {n}: yükleme hatası: {e}"),
+            }
+        }
+        // Kaydet ve Enter/araç çubuğu dışı bitişler aynı: diske yaz.
+        Some(Action::Save) | Some(Action::Copy) | Some(Action::Cancel) | None => {
+            match write_image(&path, &shot, format, quality) {
+                Ok(()) => eprintln!("yakalama {n}: kaydedildi {}", path.display()),
+                Err(e) => eprintln!("yakalama {n}: hata: {e}"),
+            }
+        }
     }
+}
+
+/// Launches `--window --tab translate` as a child process so the overlay's
+/// "Çevir" action has somewhere to land.
+fn open_translate_window() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let _ = std::process::Command::new(exe)
+        .args(["--window", "--tab", "translate"])
+        .spawn();
 }
 
 /// Full-screen capture (no region picker): grab everything, save + clipboard.

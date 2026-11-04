@@ -13,6 +13,13 @@ use sf_draw::model::Shape;
 pub struct EditResult {
     pub region: SelectionRect,
     pub shapes: Vec<Shape>,
+    /// The user's chosen action bar button, or `None` if they finished with
+    /// Enter / right-click. `Cancel` is never returned — it yields `None` from
+    /// `edit_region`.
+    pub action: Option<crate::overlay_chrome::Action>,
+    /// Stroke width the user picked in the option bar, in logical pixels. The
+    /// `Shape` model has no width field, so the caller applies this at render.
+    pub stroke_width: f32,
 }
 
 /// Opens the interactive overlay. Returns `None` if the user cancels.
@@ -29,7 +36,7 @@ pub fn edit_region() -> Option<EditResult> {
 #[cfg(windows)]
 mod imp {
     use super::{EditResult, SelectionRect};
-    use crate::overlay_chrome::{self, Clickable, Hit, ModeChoice};
+    use crate::overlay_chrome::{self, Action, Clickable, Hit, ModeChoice};
     use crate::selection::SelectionState;
     use sf_draw::canvas::Canvas;
     use sf_draw::model::{self, Shape, Tool};
@@ -57,7 +64,7 @@ mod imp {
     const IDC_CROSS: u16 = 32515;
 
     /// Phase of the interaction.
-    #[derive(PartialEq)]
+    #[derive(Clone, Copy, PartialEq)]
     enum Phase {
         Selecting,
         Drawing,
@@ -82,6 +89,10 @@ mod imp {
         mon_w: i32,
         /// Son paint'te çizilen tıklanabilir alanlar; isabet testi buradan yapılır.
         clickables: Vec<Clickable>,
+        /// Seçili çizgi kalınlığı (mantıksal px).
+        stroke_width: u32,
+        /// Kullanıcının seçtiği son eylem; `None` ise Enter/iptal ile bitmiştir.
+        action: Option<Action>,
     }
 
     pub fn edit_region() -> Option<EditResult> {
@@ -124,6 +135,8 @@ mod imp {
                 scale: 1.0,
                 mon_w: vw,
                 clickables: Vec::new(),
+                stroke_width: sf_draw::LINE_WIDTH.round() as u32,
+                action: None,
             };
 
             let hwnd = CreateWindowExW(
@@ -180,9 +193,15 @@ mod imp {
                 return None;
             }
             let region = state.region?;
+            let action = match state.action {
+                Some(crate::overlay_chrome::Action::Cancel) => None,
+                other => other,
+            };
             Some(EditResult {
                 region,
                 shapes: state.shapes.clone(),
+                action,
+                stroke_width: state.stroke_width as f32,
             })
         }
     }
@@ -358,12 +377,34 @@ mod imp {
             Hit::Mode(ModeChoice::Region) => {}
             Hit::Tool(t) => s.tool = t,
             Hit::Color(rgb) => s.color = Rgba::rgb(rgb),
+            Hit::Width(w) => s.stroke_width = w,
+            // Dolgu bu aşamada çizim modeline işlenmiyor (Shape dolgu alanı
+            // taşımıyor); çip durum gösterir, çizim davranışı değişmez.
+            Hit::Fill(_) => {}
+            Hit::Action(a) => {
+                s.action = Some(a);
+                if a == Action::Cancel {
+                    s.cancelled = true;
+                } else {
+                    if s.region.is_none() {
+                        s.region = Some((s.origin.0, s.origin.1, s.shot.width, s.shot.height));
+                    }
+                    s.cancelled = false;
+                }
+                let _ = unsafe { DestroyWindow(hwnd) };
+            }
         }
     }
 
-    /// Turns the in-progress drag into a stored shape.
+    /// Turns the in-progress drag into a stored shape. A click that moved less
+    /// than `MIN_DRAG` px is discarded, so a stray click cannot leave an
+    /// invisible zero-size shape in the output.
     fn commit_shape(s: &mut State, x: f32, y: f32) {
         let (sx, sy) = s.drag_start;
+        const MIN_DRAG: f32 = 3.0;
+        if (x - sx).abs() < MIN_DRAG && (y - sy).abs() < MIN_DRAG {
+            return;
+        }
         match s.tool {
             Tool::Rect => {
                 let (rx, ry, rw, rh) = norm(sx, sy, x, y);
@@ -427,6 +468,43 @@ mod imp {
         (x0.min(x1), y0.min(y1), (x1 - x0).abs(), (y1 - y0).abs())
     }
 
+    /// Seçim dışını karartır (C# XAML'deki dört `#7A000000` dikdörtgenin
+    /// karşılığı). GDI'da alfa karıştırmak yerine piksel tamponunda çarpma
+    /// yapılıyor: daha ucuz ve %48 alfa tam uygulanıyor.
+    pub(super) fn dim_outside(buffer: &mut [u8], w: i32, h: i32, keep: Option<(i32, i32, i32, i32)>) {
+        const NUM: u32 = 256 - 0x7A; // 0x7A/255 opaklık karartma
+        const DEN: u32 = 256;
+        let (kx0, ky0, kx1, ky1) = match keep {
+            Some((x, y, rw, rh)) => (x, y, x + rw, y + rh),
+            None => (0, 0, 0, 0),
+        };
+        let mut row = 0i32;
+        while row < h {
+            let inside_y = row >= ky0 && row < ky1;
+            let base = (row * w) as usize * 4;
+            let mut col = 0i32;
+            // Karartma gereken yatay aralıkları yürüyerek bul; satır içi
+            // segmentasyon seçim dışındaki tek koşuyu verir.
+            while col < w {
+                let inside_x = inside_y && col >= kx0 && col < kx1;
+                if inside_x {
+                    col = kx1.min(w);
+                    continue;
+                }
+                let end = if inside_y && kx0 > col { kx0.min(w) } else { w };
+                let span = (base + col as usize * 4)..(base + end as usize * 4);
+                for (k, v) in buffer[span].iter_mut().enumerate() {
+                    // Dördüncü bayt alfa; BGRA'da korunur.
+                    if k % 4 != 3 {
+                        *v = ((*v as u32 * NUM) / DEN) as u8;
+                    }
+                }
+                col = end.max(col + 1);
+            }
+            row += 1;
+        }
+    }
+
     unsafe fn paint(hdc: HDC, s: &mut State) {
         let (w, h) = (s.shot.width, s.shot.height);
         let info = BITMAPINFO {
@@ -447,12 +525,26 @@ mod imp {
         // Şekiller sanal koordinatta; tampon istemci koordinatında, pencere
         // başlangıcını çıkararak hizala.
         let mut buffer = s.shot.bgra.clone();
+        // Seçim dışı karartılır; seçim içi ve henüz çizilmemiş şekiller net kalır.
+        // Seçili bölge istemci koordinatında: bölge sanal uzayda, origin çıkar.
+        let keep = match (s.phase, s.region) {
+            (Phase::Drawing, Some((rx, ry, rw, rh))) => {
+                Some((rx - s.origin.0, ry - s.origin.1, rw, rh))
+            }
+            (Phase::Selecting, _) if s.selection.is_dragging() => {
+                let r = s.selection.current_rect();
+                Some(r)
+            }
+            _ => None,
+        };
+        dim_outside(&mut buffer, w, h, keep);
         {
             let mut canvas = Canvas::new(&mut buffer, w, h);
             for shape in &s.shapes {
-                model::render(
+                model::render_with(
                     &mut canvas,
                     &shape.translate(-(s.origin.0 as f32), -(s.origin.1 as f32)),
+                    s.stroke_width as f32,
                 );
             }
         }
@@ -503,19 +595,52 @@ mod imp {
                         "Alan seçmek için sürükleyin · Esc: iptal"
                     },
                 );
+                // Ölçü rozeti imlecin yanında, seçim sürüklenirken.
+                if s.selection.is_dragging() {
+                    let (x, y, sw, sh) = s.selection.current_rect();
+                    let _ = overlay_chrome::draw_size_badge(
+                        hdc,
+                        x + sw + 10,
+                        y + sh + 10,
+                        w,
+                        h,
+                        s.scale,
+                        sw,
+                        sh,
+                    );
+                }
             }
             Phase::Drawing => {
                 let region = s.region.unwrap_or((0, 0, w, h));
+                let client_region =
+                    (region.0 - s.origin.0, region.1 - s.origin.1, region.2, region.3);
                 s.clickables = overlay_chrome::draw_tool_strip(
                     hdc,
                     s.mon_w / 2,
                     w,
                     h,
-                    (region.0 - s.origin.0, region.1 - s.origin.1, region.2, region.3),
+                    client_region,
                     s.scale,
                     s.tool,
                     ((s.color.r as u32) << 16) | ((s.color.g as u32) << 8) | s.color.b as u32,
                 );
+                // Seçenek çubuğu araç şeridinin altına, eylem çubuğu ekranın
+                // altına; ikisi de aynı isabet listesine eklenir.
+                let strip =
+                    overlay_chrome::tool_strip_rect(s.mon_w / 2, w, h, client_region, s.scale);
+                let strip_center = strip.left + (strip.right - strip.left) / 2;
+                s.clickables.extend(overlay_chrome::draw_option_bar(
+                    hdc,
+                    strip_center,
+                    strip.bottom,
+                    w,
+                    h,
+                    s.scale,
+                    s.stroke_width,
+                    false,
+                ));
+                s.clickables
+                    .extend(overlay_chrome::draw_action_bar(hdc, w, h, s.scale));
             }
         }
     }
@@ -525,5 +650,44 @@ mod imp {
     }
     fn hi(l: LPARAM) -> i32 {
         ((l.0 as u32 >> 16) & 0xFFFF) as i16 as i32
+    }
+}
+
+#[cfg(all(test, windows))]
+mod dim_tests {
+    /// Dims only the pixels outside `keep`, leaving alpha untouched.
+    fn dim(buffer: &mut [u8], w: i32, h: i32, keep: Option<(i32, i32, i32, i32)>) {
+        super::imp::dim_outside(buffer, w, h, keep);
+    }
+
+    fn px(buffer: &[u8], w: i32, x: i32, y: i32) -> (u8, u8, u8, u8) {
+        let i = ((y * w + x) * 4) as usize;
+        (buffer[i], buffer[i + 1], buffer[i + 2], buffer[i + 3])
+    }
+
+    #[test]
+    fn dims_outside_and_spares_inside() {
+        let (w, h) = (10i32, 10i32);
+        let mut buf = vec![200u8; (w * h * 4) as usize];
+        for i in (3..buf.len()).step_by(4) {
+            buf[i] = 0xFF; // opaque alpha
+        }
+        dim(&mut buf, w, h, Some((2, 2, 4, 4)));
+
+        // Inside the kept rect: untouched.
+        assert_eq!(px(&buf, w, 3, 3), (200, 200, 200, 0xFF));
+        // Outside: scaled by (256 - 0x7A) / 256 = 0.5234...
+        let (b, ..) = px(&buf, w, 0, 0);
+        assert_eq!(b, (200 * 0x86 / 256) as u8);
+        // A pixel just past the rect's far edge is dimmed again.
+        assert_eq!(px(&buf, w, 6, 3).0, (200 * 0x86 / 256) as u8);
+    }
+
+    #[test]
+    fn no_keep_rect_dims_everything() {
+        let (w, h) = (4i32, 4i32);
+        let mut buf = vec![255u8; (w * h * 4) as usize];
+        dim(&mut buf, w, h, None);
+        assert_eq!(px(&buf, w, 1, 1).0, (255 * 0x86 / 256) as u8);
     }
 }
