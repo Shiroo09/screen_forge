@@ -18,6 +18,7 @@ pub enum Tool {
     Pen,
     Step,
     Blur,
+    Text,
 }
 
 impl Tool {
@@ -30,7 +31,8 @@ impl Tool {
             Tool::Line => Tool::Pen,
             Tool::Pen => Tool::Step,
             Tool::Step => Tool::Blur,
-            Tool::Blur => Tool::Rect,
+            Tool::Blur => Tool::Text,
+            Tool::Text => Tool::Rect,
         }
     }
 
@@ -44,6 +46,7 @@ impl Tool {
             Tool::Pen => "Pen",
             Tool::Step => "Step",
             Tool::Blur => "Blur",
+            Tool::Text => "Text",
         }
     }
 }
@@ -90,6 +93,15 @@ pub enum Shape {
         number: u32,
         color: Rgba,
     },
+    /// A text label.
+    Text {
+        x: f32,
+        y: f32,
+        text: String,
+        scale: f32,
+        color: Rgba,
+        ribbon: bool,
+    },
     /// A blur/pixelate redaction over a rectangle.
     Blur {
         x: f32,
@@ -127,7 +139,7 @@ impl Shape {
                 *cx += dx;
                 *cy += dy;
             }
-            Shape::Blur { x, y, .. } => {
+            Shape::Blur { x, y, .. } | Shape::Text { x, y, .. } => {
                 *x += dx;
                 *y += dy;
             }
@@ -165,6 +177,14 @@ pub fn render(canvas: &mut Canvas, shape: &Shape) {
             color,
         } => {
             shapes::draw_step(canvas, *cx, *cy, *radius, *number, *color, Rgba::new(255, 255, 255, 255));
+        }
+        Shape::Text { x, y, text, scale, color, ribbon } => {
+            let bg = if *ribbon {
+                Some(Rgba::new(0x1F, 0x24, 0x30, 0xCC))
+            } else {
+                None
+            };
+            crate::text::draw_text(canvas, *x, *y, text, *scale, *color, bg);
         }
         Shape::Blur { x, y, w, h, kind, strength } => {
             // Blur/pixelate mutate the underlying pixels, so they go through the

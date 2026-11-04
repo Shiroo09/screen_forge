@@ -167,16 +167,16 @@ fn tool_cycles_through_all_tools() {
     use sf_draw::model::Tool;
     let mut t = Tool::Rect;
     let mut seen = vec![t];
-    for _ in 0..7 {
+    for _ in 0..8 {
         t = t.next();
         seen.push(t);
     }
-    assert_eq!(t, Tool::Rect, "must return to start after 7 steps");
+    assert_eq!(t, Tool::Rect, "must return to start after 8 steps");
     // All seven tools appear exactly once.
     let mut names: Vec<_> = seen.iter().map(|t| t.name()).collect();
     names.sort_unstable();
     names.dedup();
-    assert_eq!(names.len(), 7);
+    assert_eq!(names.len(), 8);
 }
 
 #[test]
@@ -299,3 +299,79 @@ fn blur_shape_via_model_softens_pixels() {
     let mid = c.get(16, 8).unwrap();
     assert!(mid.r > 40 && mid.r < 215, "model blur should soften the edge");
 }
+
+// ─── Text ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn text_glyph_marks_pixels() {
+    use sf_draw::text::{draw_text, measure};
+    let mut px = surface(64, 32);
+
+    let (w, h) = measure("HI", 2.0);
+    assert!(w > 0.0 && h > 0.0);
+    {
+        let mut c = Canvas::new(&mut px, 64, 32);
+        draw_text(&mut c, 4.0, 4.0, "HI", 2.0, WHITE, None);
+    }
+
+    let c = Canvas::new(&mut px, 64, 32);
+    // Count non-background pixels in the text band.
+    let mut marked = 0;
+    for y in 4..30 {
+        for x in 4..60 {
+            if c.get(x, y).unwrap().r > 200 {
+                marked += 1;
+            }
+        }
+    }
+    assert!(marked > 20, "text should mark many pixels, got {marked}");
+}
+
+#[test]
+fn text_measure_scales_with_size() {
+    use sf_draw::text::measure;
+    let (w1, h1) = measure("ABC", 1.0);
+    let (w2, h2) = measure("ABC", 2.0);
+    assert!((w2 - w1 * 2.0).abs() < 0.1);
+    assert!((h2 - h1 * 2.0).abs() < 0.1);
+}
+
+#[test]
+fn text_ribbon_draws_background() {
+    use sf_draw::model::{render, Shape};
+    let mut px = surface(64, 32);
+    {
+        let mut c = Canvas::new(&mut px, 64, 32);
+        render(
+            &mut c,
+            &Shape::Text {
+                x: 8.0,
+                y: 8.0,
+                text: "OK".into(),
+                scale: 2.0,
+                color: WHITE,
+                ribbon: true,
+            },
+        );
+    }
+    let c = Canvas::new(&mut px, 64, 32);
+    // The ribbon is 0xCC-alpha over the grey backdrop: the result is darker than
+    // grey and blue-tinted, not the raw ribbon colour.
+    let pad = c.get(6, 6).unwrap();
+    assert!(pad.r < 100 && pad.b >= pad.r, "ribbon should darken into a cool tone, got {pad:?}");
+}
+
+#[test]
+fn text_tool_and_shape_translate() {
+    use sf_draw::model::Shape;
+    let s = Shape::Text {
+        x: 10.0,
+        y: 10.0,
+        text: "X".into(),
+        scale: 1.0,
+        color: WHITE,
+        ribbon: false,
+    };
+    assert_eq!(s.translate(-5.0, -5.0).translate(5.0, 5.0), s);
+}
+

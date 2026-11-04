@@ -293,6 +293,18 @@ mod imp {
                     color: s.color,
                 });
             }
+            Tool::Text => {
+                // No text-entry dialog in the overlay yet: place a caption at the
+                // click point. The caller can edit the string before export.
+                s.shapes.push(Shape::Text {
+                    x,
+                    y,
+                    text: "TEXT".to_string(),
+                    scale: 2.0,
+                    color: s.color,
+                    ribbon: true,
+                });
+            }
             Tool::Blur => {
                 let (rx, ry, rw, rh) = norm(sx, sy, x, y);
                 s.shapes.push(Shape::Blur {
