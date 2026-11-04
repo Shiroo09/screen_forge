@@ -9,7 +9,11 @@
 #[cfg(windows)]
 mod mf;
 #[cfg(windows)]
+mod wasapi;
+#[cfg(windows)]
 pub use mf::Mp4Writer;
+#[cfg(windows)]
+pub use wasapi::AudioCapture;
 
 /// Whether MP4 recording is available on this platform/build.
 pub const fn is_supported() -> bool {
