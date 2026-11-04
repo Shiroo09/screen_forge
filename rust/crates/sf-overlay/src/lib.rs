@@ -2,4 +2,5 @@
 //! Pure math only; rendering stays with the UI toolkits.
 
 pub mod arrow;
+pub mod presenter;
 pub mod subtitle;
