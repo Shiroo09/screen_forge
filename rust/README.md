@@ -36,6 +36,7 @@ framework overhead a tray app shouldn't carry.
 | `sf-overlay` | `ScreenForge/Presenter/ArrowBend.cs`, `Subtitle/SubtitleMath.cs` | Ported, contract-tested |
 | `sf-draw` | `ScreenForge/Editor/ShapeItems.cs`, `StepBlurImageItems.cs` (blur) | Ported, pure-Rust rasterizer |
 | `sf-record` | `ScreenForge/Record/MfH264Writer.cs`, `SystemLoopback.cs` | Ported, MF H.264 + WASAPI |
+| `sf-bg` | `ScreenForge/Background/LocalSubjectSegmenter.cs` | Ported, u2netp via ONNX Runtime |
 
 Verified: `sf-gif` produces output **byte-for-byte identical** to the C#
 encoder across Neural/Octree quantization, Floyd-Steinberg dithering, global vs

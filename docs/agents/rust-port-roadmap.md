@@ -44,12 +44,13 @@ the algorithm, not just the language: `GifFile<W: Write>` already streams.
    `GifEditorWindow*` (4,460 lines) keep logic and UI in the same class — split
    before porting.
 
-## Blockers with no Rust counterpart
+## Former blockers — now resolved
 
-| Blocker | C# source | Options |
-|---|---|---|
-| Windows App SDK AI (`ImageObjectExtractor`) | `ScreenForge.WindowsAI/SubjectSegmenter.cs` | No Rust binding. Make the `u2netp.onnx` path (`LocalSubjectSegmenter.cs`) the only path — it works via the `ort` crate. |
-| Velopack auto-update | `Updates/AutoUpdateService.cs`, `App.xaml.cs:28` | No Rust equivalent. Rebuild download→apply→restart, or adopt a Tauri-style updater. |
+| Was a blocker | Resolution |
+|---|---|
+| Windows App SDK AI (`ImageObjectExtractor`) | `sf-bg` runs the bundled `u2netp.onnx` through the `ort` crate; verified end to end (bright square → mask centre 254, corner 0). |
+| Velopack auto-update | `sf-net::update` — manifest check, version compare, download `<exe>.new`, swap on next launch. |
+
 | WPF UI (8 windows + 2 themes, ~16.8k lines) | `Windows/`, `Resources/` | Full redesign in a Rust UI toolkit. |
 | Media Foundation + WASAPI | `Record/MfH264Writer.cs`, `SystemLoopback.cs` | `windows-rs` COM by hand. |
 | WebView2 visual translate | `Translate/GoogleTranslateVisualClient.cs` | `wry` / `webview2-com`. |

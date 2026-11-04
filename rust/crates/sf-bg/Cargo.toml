@@ -1,0 +1,17 @@
+[package]
+name = "sf-bg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Subject segmentation: u2netp preprocessing + ONNX inference (Rust replacement for ScreenForge.Background.LocalSubjectSegmenter)"
+
+[dependencies]
+# ONNX model runs through the ort crate; the download-binaries feature fetches
+# the ONNX Runtime shared library at build time, so no manual install is needed.
+ort = { version = "2.0.0-rc.10", features = ["download-binaries"], optional = true }
+
+[features]
+# ONNX inference pulls a large native dependency; the preprocessing is available
+# without it so the crate stays usable in lightweight builds and tests.
+onnx = ["dep:ort"]

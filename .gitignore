@@ -43,3 +43,6 @@ iscc_err.txt
 
 # scratch measure scripts
 /rust/*.ps1
+
+# u2netp model copy for sf-bg tests (canonical copy lives in ScreenForge/Models)
+/rust/crates/sf-bg/u2netp.onnx
