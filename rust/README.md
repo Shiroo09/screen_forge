@@ -64,10 +64,11 @@ cargo run -p sf-cli -- run                           # tray shell: Alt+Shift+S c
 `shot` captures and places the image on the Windows clipboard (CF_DIB) as well as
 saving it — verified by reading it back with `Clipboard.GetImage()`.
 
-The `run` command is the interactive path: it registers the global hotkey,
-stays alive, and saves a PNG each time the chord fires. Verified by driving it
-(Ctrl+Shift+F9 to avoid the running C# app's chord) — two synthesized presses
-produced two captured PNGs.
+The `run` command is the interactive path: it registers the global hotkey, then
+on each press opens the region picker, crops the selection, copies it to the
+clipboard and saves it. Verified by driving it (Ctrl+Shift+F9 to avoid the
+running C# app's chord) — one synthesized press, one 229x114 drag, produced a
+229x114 clipboard image and a matching PNG.
 
 `record` mirrors the C# recorder's split: capture frames are Deflate-compressed as
 they arrive (bounded memory), then exported once with a **global palette** so

@@ -278,13 +278,26 @@ fn run_tray(seconds: f64, modifiers: u32, vk: u32) -> Result<String, String> {
 
     let reg = sf_capture::hotkey::register(modifiers, vk, move || {
         let n = count_cb.fetch_add(1, Ordering::SeqCst) + 1;
-        match sf_capture::capture_virtual_screen() {
+        // Lightshot flow: let the user drag a region, crop it, put it on the
+        // clipboard and save it. Cancel (Esc/right-click) falls back to nothing.
+        let result = match sf_capture::overlay_window::pick_region() {
+            Some((x, y, w, h)) => sf_capture::capture_region(x, y, w, h),
+            None => {
+                eprintln!("hotkey {n}: selection cancelled");
+                return;
+            }
+        };
+
+        match result {
             Ok(shot) => {
                 let path = dir_cb.join(format!("hotkey-{n}.png"));
+                if let Err(e) = sf_capture::copy_bgra_to_clipboard(shot.width, shot.height, &shot.bgra) {
+                    eprintln!("hotkey {n}: clipboard failed: {e}");
+                }
                 match write_png(path.to_str().unwrap_or("out.png"), shot.width, shot.height, &shot.bgra) {
                     // Log, don't pop a modal: the callback runs on the hotkey
                     // thread and a blocking dialog would stall further hotkeys.
-                    Ok(()) => eprintln!("hotkey {n}: saved {}", path.display()),
+                    Ok(()) => eprintln!("hotkey {n}: saved {} ({}x{})", path.display(), shot.width, shot.height),
                     Err(e) => eprintln!("hotkey {n}: png failed: {e}"),
                 }
             }
@@ -292,7 +305,7 @@ fn run_tray(seconds: f64, modifiers: u32, vk: u32) -> Result<String, String> {
         }
     })?;
 
-    eprintln!("ScreenForge ready — press Alt+Shift+S to capture");
+    eprintln!("ScreenForge ready — press the hotkey, drag a region to capture");
 
     if seconds > 0.0 {
         std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
