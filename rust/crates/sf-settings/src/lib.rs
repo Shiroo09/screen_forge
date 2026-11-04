@@ -8,10 +8,12 @@
 mod lang;
 mod modifiers;
 mod recents;
+pub mod startup;
 
 pub use lang::{default_pair, is_known, label, map_ui_culture, LANGUAGES};
 pub use modifiers::Modifiers;
 pub use recents::{ensure_pair, VisualTranslateRecents};
+pub use startup::{set_enabled as set_startup_enabled, startup_command};
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
