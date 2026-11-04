@@ -293,6 +293,17 @@ mod imp {
                     color: s.color,
                 });
             }
+            Tool::Blur => {
+                let (rx, ry, rw, rh) = norm(sx, sy, x, y);
+                s.shapes.push(Shape::Blur {
+                    x: rx,
+                    y: ry,
+                    w: rw,
+                    h: rh,
+                    kind: sf_draw::blur::MaskKind::Blur,
+                    strength: 8.0,
+                });
+            }
         }
     }
 

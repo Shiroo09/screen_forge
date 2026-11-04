@@ -17,6 +17,7 @@ pub enum Tool {
     Line,
     Pen,
     Step,
+    Blur,
 }
 
 impl Tool {
@@ -28,7 +29,8 @@ impl Tool {
             Tool::Arrow => Tool::Line,
             Tool::Line => Tool::Pen,
             Tool::Pen => Tool::Step,
-            Tool::Step => Tool::Rect,
+            Tool::Step => Tool::Blur,
+            Tool::Blur => Tool::Rect,
         }
     }
 
@@ -41,6 +43,7 @@ impl Tool {
             Tool::Line => "Line",
             Tool::Pen => "Pen",
             Tool::Step => "Step",
+            Tool::Blur => "Blur",
         }
     }
 }
@@ -87,6 +90,15 @@ pub enum Shape {
         number: u32,
         color: Rgba,
     },
+    /// A blur/pixelate redaction over a rectangle.
+    Blur {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        kind: crate::blur::MaskKind,
+        strength: f32,
+    },
 }
 
 impl Shape {
@@ -114,6 +126,10 @@ impl Shape {
             Shape::Step { cx, cy, .. } => {
                 *cx += dx;
                 *cy += dy;
+            }
+            Shape::Blur { x, y, .. } => {
+                *x += dx;
+                *y += dy;
             }
         }
         s
@@ -149,6 +165,15 @@ pub fn render(canvas: &mut Canvas, shape: &Shape) {
             color,
         } => {
             shapes::draw_step(canvas, *cx, *cy, *radius, *number, *color, Rgba::new(255, 255, 255, 255));
+        }
+        Shape::Blur { x, y, w, h, kind, strength } => {
+            // Blur/pixelate mutate the underlying pixels, so they go through the
+            // canvas buffer rather than drawing atop it.
+            canvas.apply_mask(
+                (*x as i32, *y as i32, *w as i32, *h as i32),
+                *kind,
+                *strength,
+            );
         }
     }
 }

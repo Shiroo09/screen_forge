@@ -167,16 +167,16 @@ fn tool_cycles_through_all_tools() {
     use sf_draw::model::Tool;
     let mut t = Tool::Rect;
     let mut seen = vec![t];
-    for _ in 0..6 {
+    for _ in 0..7 {
         t = t.next();
         seen.push(t);
     }
-    assert_eq!(t, Tool::Rect, "must return to start after 6 steps");
-    // All six tools appear exactly once.
+    assert_eq!(t, Tool::Rect, "must return to start after 7 steps");
+    // All seven tools appear exactly once.
     let mut names: Vec<_> = seen.iter().map(|t| t.name()).collect();
     names.sort_unstable();
     names.dedup();
-    assert_eq!(names.len(), 6);
+    assert_eq!(names.len(), 7);
 }
 
 #[test]
@@ -215,4 +215,87 @@ fn render_all_draws_in_order_on_capture() {
     assert!(c.get(32, 32).unwrap().b > 150, "badge should cover the centre");
     // The rect edge is still visible outside the badge.
     assert!(c.get(8, 28).unwrap().r > 150, "rect edge visible");
+}
+
+// ─── Blur / pixelate ──────────────────────────────────────────────────────────
+
+/// A buffer with a hard black/white edge, to see the mask soften or block it.
+fn edge_surface(w: i32, h: i32) -> Vec<u8> {
+    let mut px = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let v = if x < w / 2 { 0 } else { 255 };
+            px[i] = v;
+            px[i + 1] = v;
+            px[i + 2] = v;
+            px[i + 3] = 255;
+        }
+    }
+    px
+}
+
+#[test]
+fn blur_softens_an_edge() {
+    use sf_draw::blur::{apply_mask, MaskKind};
+    let mut px = edge_surface(32, 16);
+    // Blur a band straddling the edge.
+    apply_mask(&mut px, 32, 16, (10, 0, 12, 16), MaskKind::Blur, 3.0);
+
+    let c = Canvas::new(&mut px, 32, 16);
+    // Right at the old edge, the pixel is now a mid tone, not pure black/white.
+    let mid = c.get(16, 8).unwrap();
+    assert!(mid.r > 40 && mid.r < 215, "edge should soften, got {mid:?}");
+    // Far from the blurred rect, the original edge is untouched.
+    let outside = c.get(0, 8).unwrap();
+    assert_eq!(outside.r, 0);
+}
+
+#[test]
+fn pixelate_blocks_an_edge() {
+    use sf_draw::blur::{apply_mask, MaskKind};
+    let mut px = edge_surface(32, 16);
+    apply_mask(&mut px, 32, 16, (0, 0, 32, 16), MaskKind::Pixelate, 8.0);
+
+    let c = Canvas::new(&mut px, 32, 16);
+    // Every pixel in an 8x8 cell shares one colour.
+    let a = c.get(0, 0).unwrap();
+    let b = c.get(7, 7).unwrap();
+    assert_eq!((a.r, a.g, a.b), (b.r, b.g, b.b), "cell must be uniform");
+    // And neighbouring cells across the edge differ.
+    let left = c.get(0, 0).unwrap();
+    let right = c.get(24, 0).unwrap();
+    assert!(right.r > left.r, "the two sides of the edge differ");
+}
+
+#[test]
+fn mask_clamps_out_of_bounds_rect() {
+    use sf_draw::blur::{apply_mask, MaskKind};
+    let mut px = edge_surface(8, 8);
+    // Must not panic or read out of range.
+    apply_mask(&mut px, 8, 8, (-10, -10, 100, 100), MaskKind::Blur, 2.0);
+    apply_mask(&mut px, 8, 8, (5, 5, 100, 100), MaskKind::Pixelate, 3.0);
+}
+
+#[test]
+fn blur_shape_via_model_softens_pixels() {
+    use sf_draw::model::{render, Shape};
+    let mut px = edge_surface(32, 16);
+    {
+        let mut c = Canvas::new(&mut px, 32, 16);
+        render(
+            &mut c,
+            &Shape::Blur {
+                x: 10.0,
+                y: 0.0,
+                w: 12.0,
+                h: 16.0,
+                kind: sf_draw::blur::MaskKind::Blur,
+                strength: 3.0,
+            },
+        );
+    }
+    let c = Canvas::new(&mut px, 32, 16);
+    let mid = c.get(16, 8).unwrap();
+    assert!(mid.r > 40 && mid.r < 215, "model blur should soften the edge");
 }

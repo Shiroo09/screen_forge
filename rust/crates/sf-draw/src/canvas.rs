@@ -69,6 +69,11 @@ impl<'a> Canvas<'a> {
         self.pixels[i + 3] = 255;
     }
 
+    /// Applies a blur/pixelate mask over a rectangle in this canvas.
+    pub fn apply_mask(&mut self, rect: (i32, i32, i32, i32), kind: crate::blur::MaskKind, strength: f32) {
+        crate::blur::apply_mask(self.pixels, self.width, self.height, rect, kind, strength);
+    }
+
     /// Reads a pixel back as RGBA. Test helper and blur source.
     pub fn get(&self, x: i32, y: i32) -> Option<Rgba> {
         if x < 0 || y < 0 || x >= self.width || y >= self.height {

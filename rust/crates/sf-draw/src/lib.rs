@@ -8,10 +8,12 @@
 //! Coverage is currently the shape fill/stroke core; the WPF text tool and the
 //! blur/pixelate item still belong to the editor UI.
 
+pub mod blur;
 pub mod canvas;
 pub mod model;
 pub mod shapes;
 
+pub use blur::{apply_mask, MaskKind};
 pub use canvas::{Canvas, Rgba};
 pub use model::{render, render_all, Shape, Tool, LINE_WIDTH};
 pub use shapes::{draw_arrow, draw_ellipse, draw_rect, draw_step, draw_stroke, Stroke};
