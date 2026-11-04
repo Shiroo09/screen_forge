@@ -36,14 +36,57 @@ pub fn run_tray() {
         }
     };
 
-    // Tray icon: left-click runs the same capture as the hotkey.
-    let tray = sf_capture::tray::install("ScreenForge — ekran görüntüsü", {
-        let out_dir = out_dir.clone();
-        let count = Arc::clone(&count);
-        let format = settings.output_format;
-        let quality = settings.quality;
-        move || capture_once(&count, &out_dir, format, quality)
-    })
+    // Tray icon with the original menu. Left-click captures; right-click opens
+    // the menu (same items as the C# app's TrayIconService).
+    let menu_items: Vec<(String, Box<dyn FnMut() + Send>)> = {
+        let mut items: Vec<(String, Box<dyn FnMut() + Send>)> = Vec::new();
+
+        let (d, c, f, q) = (out_dir.clone(), Arc::clone(&count), settings.output_format, settings.quality);
+        items.push((
+            "Bölge Yakala".to_string(),
+            Box::new(move || capture_once(&c, &d, f, q)),
+        ));
+
+        let (d, c, f, q) = (out_dir.clone(), Arc::clone(&count), settings.output_format, settings.quality);
+        items.push((
+            "Tam Ekran Yakala".to_string(),
+            Box::new(move || capture_fullscreen(&c, &d, f, q)),
+        ));
+
+        items.push((
+            "Renk Seçici".to_string(),
+            Box::new(|| eprintln!("renk seçici: yakında")),
+        ));
+        items.push((
+            "Hızlı Çeviri".to_string(),
+            Box::new(|| eprintln!("hızlı çeviri: pencereyi aç (--window)")),
+        ));
+        items.push((
+            "Ayarlar".to_string(),
+            Box::new(|| {
+                let (mut s, _) = sf_settings::AppSettings::load(&sf_settings::settings_path());
+                let _ = sf_capture::settings_window::show(&mut s);
+                let _ = s.save(&sf_settings::settings_path());
+            }),
+        ));
+        items.push((
+            "Çıkış".to_string(),
+            Box::new(|| std::process::exit(0)),
+        ));
+        items
+    };
+
+    let tray = sf_capture::tray::install_with_menu(
+        "ScreenForge — ekran görüntüsü",
+        {
+            let out_dir = out_dir.clone();
+            let count = Arc::clone(&count);
+            let format = settings.output_format;
+            let quality = settings.quality;
+            move || capture_once(&count, &out_dir, format, quality)
+        },
+        menu_items,
+    )
     .ok();
 
     eprintln!(
@@ -104,6 +147,32 @@ fn capture_once(
     }
 }
 
+/// Full-screen capture (no region picker): grab everything, save + clipboard.
+fn capture_fullscreen(
+    count: &AtomicU32,
+    out_dir: &std::path::Path,
+    format: sf_settings::ImageFormat,
+    quality: i32,
+) {
+    let _ = quality; // PNG is lossless; the encoder applies quality for JPEG/WebP
+    let n = count.fetch_add(1, Ordering::SeqCst) + 1;
+    let Ok(shot) = sf_capture::capture_virtual_screen() else {
+        eprintln!("tam ekran {n}: yakalanamadı");
+        return;
+    };
+    let _ = sf_capture::copy_bgra_to_clipboard(shot.width, shot.height, &shot.bgra);
+    let ext = match format {
+        sf_settings::ImageFormat::Png => "png",
+        sf_settings::ImageFormat::Jpeg => "jpg",
+        sf_settings::ImageFormat::Webp => "webp",
+    };
+    let path = out_dir.join(format!("ScreenForge-tam-{n}.{ext}"));
+    match write_image(&path, &shot, format, quality) {
+        Ok(()) => eprintln!("tam ekran {n}: kaydedildi {}", path.display()),
+        Err(e) => eprintln!("tam ekran {n}: hata: {e}"),
+    }
+}
+
 fn write_image(
     path: &std::path::Path,
     shot: &sf_capture::Captured,
@@ -116,11 +185,15 @@ fn write_image(
     }
     let img = image::RgbaImage::from_raw(shot.width as u32, shot.height as u32, rgba)
         .ok_or("boyut uyuşmadı")?;
+    let q = quality.clamp(1, 100) as u8;
     match format {
         sf_settings::ImageFormat::Png => img.save(path).map_err(|e| e.to_string()),
         sf_settings::ImageFormat::Jpeg => {
             let rgb = image::DynamicImage::ImageRgba8(img).to_rgb8();
-            rgb.save(path).map_err(|e| e.to_string())
+            let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+            image::codecs::jpeg::JpegEncoder::new_with_quality(file, q)
+                .encode_image(&rgb)
+                .map_err(|e| e.to_string())
         }
         sf_settings::ImageFormat::Webp => img
             .save_with_format(path, image::ImageFormat::WebP)

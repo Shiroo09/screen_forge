@@ -51,12 +51,23 @@ pub const WM_TRAY_CALLBACK: u32 = 0x8000 + 3;
 
 #[cfg(windows)]
 pub fn install(tooltip: &str, on_click: impl FnMut() + Send + 'static) -> Result<TrayIcon, String> {
-    imp::install(tooltip.to_string(), on_click)
+    imp::install(tooltip.to_string(), on_click, Vec::new())
 }
 
 #[cfg(not(windows))]
 pub fn install(_tooltip: &str, _on_click: impl FnMut() + Send + 'static) -> Result<TrayIcon, String> {
     Err("system tray is only supported on Windows".to_string())
+}
+
+/// Installs a tray icon with a right-click menu. Each item is a label plus the
+/// action to run when it is chosen — the Rust equivalent of the C# tray menu.
+#[cfg(windows)]
+pub fn install_with_menu(
+    tooltip: &str,
+    on_click: impl FnMut() + Send + 'static,
+    items: Vec<(String, Box<dyn FnMut() + Send>)>,
+) -> Result<TrayIcon, String> {
+    imp::install(tooltip.to_string(), on_click, items)
 }
 
 #[cfg(windows)]
@@ -73,7 +84,7 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, LoadIconW,
         RegisterClassW, IDI_APPLICATION, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_LBUTTONUP,
-        WM_NCCREATE, WNDCLASSW,
+        WM_NCCREATE, WM_RBUTTONUP, WNDCLASSW,
     };
 
     const TRAY_UID: u32 = 1;
@@ -83,7 +94,18 @@ mod imp {
             const { std::cell::RefCell::new(None) };
     }
 
-    pub fn install(tooltip: String, on_click: impl FnMut() + Send + 'static) -> Result<TrayIcon, String> {
+    type MenuFn = Box<dyn FnMut() + Send>;
+
+    thread_local! {
+        static ON_MENU: std::cell::RefCell<Vec<(String, MenuFn)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    pub fn install(
+        tooltip: String,
+        on_click: impl FnMut() + Send + 'static,
+        items: Vec<(String, MenuFn)>,
+    ) -> Result<TrayIcon, String> {
         let (ready_tx, ready_rx) = mpsc::channel::<Result<isize, String>>();
 
         let thread = std::thread::spawn(move || unsafe {
@@ -123,6 +145,7 @@ mod imp {
             };
 
             ON_CLICK.with(|c| *c.borrow_mut() = Some(Box::new(on_click) as Box<dyn FnMut()>));
+            ON_MENU.with(|c| *c.borrow_mut() = items);
 
             let mut data = NOTIFYICONDATAW {
                 cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
@@ -173,18 +196,72 @@ mod imp {
     }
 
     unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if msg == WM_TRAY_CALLBACK && lparam.0 as u32 == WM_LBUTTONUP {
-            ON_CLICK.with(|c| {
-                if let Some(cb) = c.borrow_mut().as_mut() {
-                    cb();
-                }
-            });
-            return LRESULT(0);
+        if msg == WM_TRAY_CALLBACK {
+            let event = lparam.0 as u32;
+            if event == WM_LBUTTONUP {
+                ON_CLICK.with(|c| {
+                    if let Some(cb) = c.borrow_mut().as_mut() {
+                        cb();
+                    }
+                });
+                return LRESULT(0);
+            }
+            if event == WM_RBUTTONUP {
+                show_menu(hwnd);
+                return LRESULT(0);
+            }
         }
         if msg == WM_NCCREATE {
             return DefWindowProcW(hwnd, msg, wparam, lparam);
         }
         DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    /// Builds and shows the right-click menu at the cursor.
+    unsafe fn show_menu(hwnd: HWND) {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, SetForegroundWindow,
+            TrackPopupMenu, MF_STRING, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RETURNCMD,
+        };
+
+        let Ok(menu) = CreatePopupMenu() else { return };
+        let mut labels: Vec<Vec<u16>> = Vec::new();
+        ON_MENU.with(|c| {
+            for (i, (label, _)) in c.borrow().iter().enumerate() {
+                let wide: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
+                let _ = AppendMenuW(menu, MF_STRING, i + 1, PCWSTR(wide.as_ptr()));
+                labels.push(wide);
+            }
+        });
+
+        if labels.is_empty() {
+            let _ = DestroyMenu(menu);
+            return;
+        }
+
+        let mut pt = windows::Win32::Foundation::POINT::default();
+        let _ = GetCursorPos(&mut pt);
+        let _ = SetForegroundWindow(hwnd);
+
+        let chosen = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_LEFTALIGN | TPM_BOTTOMALIGN,
+            pt.x,
+            pt.y,
+            None,
+            hwnd,
+            None,
+        );
+
+        if chosen.0 > 0 {
+            let idx = (chosen.0 as usize) - 1;
+            ON_MENU.with(|c| {
+                if let Some((_, cb)) = c.borrow_mut().get_mut(idx) {
+                    cb();
+                }
+            });
+        }
+        let _ = DestroyMenu(menu);
     }
 
     // Keep PCWSTR referenced (used by LoadIconW's zero-arg form on some builds).

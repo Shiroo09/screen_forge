@@ -11,6 +11,7 @@ enum Action {
     Copy,
     Save,
     Presenter,
+    Upload,
 }
 
 pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
@@ -72,6 +73,13 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
 
     ui.add_space(8.0);
 
+    // "Serbest" is not a capture at all: it drops straight into the collage canvas.
+    // The action bar and preview below belong to the region/full-screen path only.
+    if app.capture_mode == crate::app::CaptureMode::Freeform {
+        crate::panels::collage::ui(app, ui);
+        return;
+    }
+
     // --- Action buttons -----------------------------------------------------
     egui::Frame::new()
         .fill(theme::SURFACE)
@@ -83,14 +91,12 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
                 // The primary action follows the selected mode.
                 let primary = match app.capture_mode {
                     crate::app::CaptureMode::Region => "Bölge seç",
-                    crate::app::CaptureMode::FullScreen => "Tam ekran yakala",
-                    crate::app::CaptureMode::Freeform => "Serbest yakala",
+                    _ => "Tam ekran yakala",
                 };
                 if action_button(ui, primary, true).clicked() {
                     action = Some(match app.capture_mode {
                         crate::app::CaptureMode::Region => Action::Region,
-                        crate::app::CaptureMode::FullScreen => Action::FullScreen,
-                        crate::app::CaptureMode::Freeform => Action::Region,
+                        _ => Action::FullScreen,
                     });
                 }
                 if action_button(ui, "Panoya kopyala", false).clicked() {
@@ -102,6 +108,13 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
                 if action_button(ui, "Sunum katmanı", false).clicked() {
                     action = Some(Action::Presenter);
                 }
+                let uploading = app.uploading;
+                let upload_label = if uploading { "Yükleniyor..." } else { "Buluta yükle" };
+                ui.add_enabled_ui(!uploading, |ui| {
+                    if action_button(ui, upload_label, false).clicked() {
+                        action = Some(Action::Upload);
+                    }
+                });
             });
         });
 
@@ -178,6 +191,9 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
     if let Some(action) = action {
         run(app, action, has_image);
     }
+
+    // Upload progress / share-link box, fed by the worker thread.
+    crate::panels::upload::ui(app, ui);
 }
 
 /// Applies the clicked action, with full access to the app state.
@@ -207,8 +223,8 @@ fn run(app: &mut ScreenForgeApp, action: Action, has_image: bool) {
                 Err(e) => app.notify(format!("hata: {e}")),
             }
         }
-        Action::Presenter => {
-            app.notify("sunum katmanı açılıyor — Esc ile çık");
+        Action::Upload => crate::panels::upload::start(app),
+        Action::Presenter => {            app.notify("sunum katmanı açılıyor — Esc ile çık");
             sf_capture::presenter_window::run();
             app.notify("sunum katmanı kapandı");
         }
@@ -252,6 +268,8 @@ fn run(app: &mut ScreenForgeApp, action: Action, has_image: bool) {
 fn set_captured(app: &mut ScreenForgeApp, img: ImageBuf, message: &str) {
     app.status = format!("yakalandı: {}×{}", img.width, img.height);
     app.captured = Some(img);
+    // A new capture invalidates the previous capture's share link.
+    app.upload_url = None;
     app.notify(message);
 }
 

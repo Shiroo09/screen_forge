@@ -4,6 +4,7 @@
 //! and owns only the fields it declares here. All state lives on this struct so
 //! panels never have to coordinate.
 
+use crate::panels::collage::CollageItem;
 use crate::theme;
 
 /// Top-level navigation.
@@ -159,6 +160,12 @@ pub struct ScreenForgeApp {
     pub recents: Vec<RecentItem>,
     /// Capture mode selector (the old overlay's mode bar).
     pub capture_mode: CaptureMode,
+    /// Serbest mod ("Serbest") tuvalindeki görsel öğeler.
+    pub collage_items: Vec<CollageItem>,
+    /// Share link of the last successful cloud upload.
+    pub upload_url: Option<String>,
+    /// True while an upload worker is running.
+    pub uploading: bool,
 
     // Annotate
     pub annotate: Options,
@@ -198,6 +205,9 @@ impl ScreenForgeApp {
             captured: None,
             recents: Vec::new(),
             capture_mode: CaptureMode::default(),
+            collage_items: Vec::new(),
+            upload_url: None,
+            uploading: false,
             annotate: Options::default(),
             tool: sf_draw::model::Tool::Rect,
             color: sf_draw::Rgba::rgb(0xEA6F12),
