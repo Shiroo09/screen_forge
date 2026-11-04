@@ -294,13 +294,23 @@ fn run_tray(seconds: f64, modifiers: u32, vk: u32) -> Result<String, String> {
         let n = count_cb.fetch_add(1, Ordering::SeqCst) + 1;
         // Lightshot flow: let the user drag a region, crop it, put it on the
         // clipboard and save it. Cancel (Esc/right-click) falls back to nothing.
-        let result = match sf_capture::overlay_window::pick_region() {
-            Some((x, y, w, h)) => sf_capture::capture_region(x, y, w, h),
+        let edit = match sf_capture::editor_window::edit_region() {
+            Some(e) => e,
             None => {
-                eprintln!("hotkey {n}: selection cancelled");
+                eprintln!("hotkey {n}: cancelled");
                 return;
             }
         };
+        let (x, y, w, h) = edit.region;
+        let result = sf_capture::capture_region(x, y, w, h).map(|mut shot| {
+            // Shapes are in virtual-screen coords; shift into the crop.
+            use sf_draw::canvas::Canvas;
+            let mut canvas = Canvas::new(&mut shot.bgra, shot.width, shot.height);
+            for shape in &edit.shapes {
+                sf_draw::model::render(&mut canvas, &shape.translate(-(x as f32), -(y as f32)));
+            }
+            shot
+        });
 
         match result {
             Ok(shot) => {
