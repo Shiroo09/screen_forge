@@ -61,14 +61,20 @@ fn toolbar(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
                 for tool in TOOLS {
                     let selected = app.tool == tool;
                     let label = tool_label(tool);
-                    let btn = egui::Button::new(
-                        RichText::new(label)
-                            .size(13.0)
-                            .color(if selected { Color32::WHITE } else { theme::TEXT }),
-                    )
-                    .fill(if selected { theme::ACCENT } else { theme::SURFACE_HI })
-                    .min_size(egui::vec2(64.0, 30.0));
-                    if ui.add(btn).clicked() {
+                    let build = move || {
+                        egui::Button::new(
+                            RichText::new(label)
+                                .size(13.0)
+                                .color(if selected { Color32::WHITE } else { theme::TEXT }),
+                        )
+                        .min_size(egui::vec2(64.0, 30.0))
+                    };
+                    let response = if selected {
+                        theme::accent_button(ui, build)
+                    } else {
+                        theme::surface_button(ui, build)
+                    };
+                    if response.clicked() {
                         app.tool = tool;
                     }
                 }
@@ -170,6 +176,14 @@ fn canvas(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
         (img.width, img.height)
     };
 
+    // A new capture starts a fresh annotation: old marks do not belong to it.
+    let seq = app.captured.as_ref().map(|i| i.seq).unwrap_or(u64::MAX);
+    if app.annotated_seq != seq {
+        app.shapes.clear();
+        app.drag_from = None;
+        app.annotated_seq = seq;
+    }
+
     let avail = ui.available_size();
     let scale = (avail.x / src_w as f32).min(avail.y / src_h as f32).min(1.0);
     let disp = egui::vec2(src_w as f32 * scale, src_h as f32 * scale);
@@ -177,11 +191,11 @@ fn canvas(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
     let (rect, response) = ui.allocate_exact_size(disp, Sense::drag());
     let origin = rect.min;
 
-    // The preview texture is cached in the panel, keyed by a signature of the
-    // shapes, so a full BGRA copy + re-render + upload happens only when the
-    // drawing actually changes — not every frame.
+    // The preview texture is cached in the panel, keyed by the capture and a
+    // signature of the shapes, so a full BGRA copy + re-render + upload happens
+    // only when the capture or the drawing actually changes — not every frame.
     let sig = shape_signature(&app.shapes);
-    let tex = preview_texture(ui.ctx(), app, src_w, src_h, sig);
+    let tex = preview_texture(ui.ctx(), app, src_w, src_h, seq, sig);
     ui.painter().image(
         tex.id(),
         rect,
@@ -258,11 +272,13 @@ fn preview_texture(
     app: &ScreenForgeApp,
     w: i32,
     h: i32,
+    seq: u64,
     sig: u64,
 ) -> egui::TextureHandle {
     use std::sync::{Mutex, OnceLock};
 
     struct Cache {
+        seq: u64,
         sig: u64,
         size: (i32, i32),
         tex: Option<egui::TextureHandle>,
@@ -271,6 +287,7 @@ fn preview_texture(
 
     let cache = CACHE.get_or_init(|| {
         Mutex::new(Cache {
+            seq: u64::MAX,
             sig: u64::MAX,
             size: (0, 0),
             tex: None,
@@ -278,11 +295,13 @@ fn preview_texture(
     });
 
     let mut guard = cache.lock().unwrap();
-    let stale = guard.sig != sig || guard.size != (w, h) || guard.tex.is_none();
+    let stale =
+        guard.seq != seq || guard.sig != sig || guard.size != (w, h) || guard.tex.is_none();
     if stale {
         let preview = build_preview(app, w, h);
         let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &preview);
         guard.tex = Some(ctx.load_texture("annotate-preview", img, egui::TextureOptions::LINEAR));
+        guard.seq = seq;
         guard.sig = sig;
         guard.size = (w, h);
     }
@@ -451,9 +470,9 @@ fn export(app: &mut ScreenForgeApp) {
                 let rgb = image::DynamicImage::ImageRgba8(image).to_rgb8();
                 rgb.save(&path).map_err(|e| e.to_string())
             }
-            sf_settings::ImageFormat::Webp => {
-                image.save(&path).map_err(|e| e.to_string())
-            }
+            sf_settings::ImageFormat::Webp => image
+                .save_with_format(&path, image::ImageFormat::WebP)
+                .map_err(|e| e.to_string()),
         });
 
     match result {

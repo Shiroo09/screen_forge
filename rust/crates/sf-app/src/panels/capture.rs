@@ -211,18 +211,23 @@ fn set_captured(app: &mut ScreenForgeApp, img: ImageBuf, message: &str) {
 }
 
 fn action_button(ui: &mut egui::Ui, label: &str, primary: bool) -> egui::Response {
-    let text = RichText::new(label)
-        .size(15.0)
-        .strong()
-        .color(if primary { Color32::WHITE } else { theme::TEXT });
-    let fill = if primary { theme::ACCENT } else { theme::SURFACE_HI };
-    ui.add(
-        egui::Button::new(text)
-            .fill(fill)
-            .stroke(egui::Stroke::new(1.0, theme::BORDER))
-            .corner_radius(8.0)
-            .min_size(egui::vec2(168.0, 44.0)),
-    )
+    let label = label.to_string();
+    let build = move || {
+        egui::Button::new(
+            RichText::new(label)
+                .size(15.0)
+                .strong()
+                .color(if primary { Color32::WHITE } else { theme::TEXT }),
+        )
+        .corner_radius(8.0)
+        .min_size(egui::vec2(168.0, 44.0))
+    };
+    // Colours come from the state ramp, not `.fill()`, so hover/pressed react.
+    if primary {
+        theme::accent_button(ui, build)
+    } else {
+        theme::surface_button(ui, build)
+    }
 }
 
 /// Scales `w`×`h` to fit the box without cropping or upscaling past 1:1.
@@ -243,7 +248,6 @@ fn ext_of(format: sf_settings::ImageFormat) -> &'static str {
 }
 
 /// Encodes a BGRA buffer to the chosen format, swapping B/R to RGBA on the way.
-/// WebP needs the `image` crate's webp feature, which is not enabled here.
 fn save_image(
     path: &std::path::Path,
     width: i32,

@@ -59,16 +59,22 @@ pub struct ImageBuf {
     pub texture: Option<egui::TextureHandle>,
     /// Bumped whenever `bgra` changes, so the texture is rebuilt lazily.
     pub dirty: bool,
+    /// Identifies this capture. Panels that cache derived textures key on it, so
+    /// a new capture of the same size never reuses the previous one's preview.
+    pub seq: u64,
 }
 
 impl ImageBuf {
     pub fn from_captured(c: sf_capture::Captured) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_SEQ: AtomicU64 = AtomicU64::new(0);
         Self {
             width: c.width,
             height: c.height,
             bgra: c.bgra,
             texture: None,
             dirty: true,
+            seq: NEXT_SEQ.fetch_add(1, Ordering::Relaxed),
         }
     }
 
@@ -133,6 +139,8 @@ pub struct ScreenForgeApp {
     pub color: sf_draw::Rgba,
     pub shapes: Vec<sf_draw::Shape>,
     pub drag_from: Option<(f32, f32)>,
+    /// `seq` of the capture `shapes` were drawn on; a different capture clears them.
+    pub annotated_seq: u64,
 
     // Record
     pub recording: bool,
@@ -167,6 +175,7 @@ impl ScreenForgeApp {
             color: sf_draw::Rgba::rgb(0xEA6F12),
             shapes: Vec::new(),
             drag_from: None,
+            annotated_seq: u64::MAX,
             recording: false,
             record_gif: true,
             record_seconds: 5.0,
@@ -230,14 +239,22 @@ impl ScreenForgeApp {
                 for tab in Tab::ALL {
                     let selected = self.tab == tab;
                     let text = format!("{}  {}", tab.icon(), tab.title());
-                    let btn = egui::Button::new(
-                        egui::RichText::new(text)
-                            .size(15.0)
-                            .color(if selected { egui::Color32::WHITE } else { theme::TEXT }),
-                    )
-                    .fill(if selected { theme::ACCENT } else { theme::SURFACE })
-                    .min_size(egui::vec2(150.0, 38.0));
-                    if ui.add(btn).clicked() {
+                    let build = move || {
+                        egui::Button::new(
+                            egui::RichText::new(text)
+                                .size(15.0)
+                                .color(if selected { egui::Color32::WHITE } else { theme::TEXT }),
+                        )
+                        .min_size(egui::vec2(150.0, 38.0))
+                    };
+                    // Accent fill for the active tab, surface for the rest; both
+                    // keep their hover/pressed ramp (see `theme::stateful_button`).
+                    let response = if selected {
+                        theme::accent_button(ui, build)
+                    } else {
+                        theme::stateful_button(ui, theme::SURFACE, theme::SURFACE_HOVER, theme::SURFACE_HOVER, build)
+                    };
+                    if response.clicked() {
                         self.tab = tab;
                     }
                     ui.add_space(2.0);

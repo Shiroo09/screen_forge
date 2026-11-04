@@ -79,18 +79,22 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
     // --- Translate button ---------------------------------------------------
     let running = busy().load(Ordering::SeqCst);
     let label = if running { "Çevriliyor…" } else { "Çevir" };
-    let button = egui::Button::new(
-        RichText::new(label)
-            .size(15.0)
-            .strong()
-            .color(Color32::WHITE),
-    )
-    .fill(theme::ACCENT)
-    .stroke(egui::Stroke::new(1.0, theme::BORDER))
-    .corner_radius(8.0)
-    .min_size(egui::vec2(168.0, 44.0));
-
-    if ui.add_enabled(!running, button).clicked() {
+    let build = move || {
+        egui::Button::new(
+            RichText::new(label)
+                .size(15.0)
+                .strong()
+                .color(Color32::WHITE),
+        )
+        .corner_radius(8.0)
+        .min_size(egui::vec2(168.0, 44.0))
+    };
+    // Disabled while a translation is in flight; the accent ramp still applies.
+    let clicked = ui
+        .add_enabled_ui(!running, |ui| theme::accent_button(ui, build))
+        .inner
+        .clicked();
+    if clicked {
         start(app);
     }
     if running {
