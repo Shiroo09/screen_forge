@@ -1,0 +1,29 @@
+[package]
+name = "sf-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "ScreenForge desktop app (Rust + egui): capture, annotate, record, settings"
+
+[[bin]]
+name = "screenforge-app"
+path = "src/main.rs"
+
+[dependencies]
+sf-capture = { path = "../sf-capture" }
+sf-settings = { path = "../sf-settings" }
+sf-gif = { path = "../sf-gif" }
+sf-edit = { path = "../sf-edit" }
+sf-draw = { path = "../sf-draw" }
+sf-net = { path = "../sf-net" }
+sf-media = { path = "../sf-media" }
+sf-overlay = { path = "../sf-overlay" }
+
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = "0.37"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+rfd = "0.15"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi"] }
