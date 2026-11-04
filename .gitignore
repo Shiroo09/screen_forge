@@ -41,6 +41,9 @@ iscc_err.txt
 # Rust build output (rust/ workspace)
 /rust/target/
 
+# Rust installer output (iscc rust/setup-rust.iss)
+/rust/setup/
+
 # scratch measure scripts
 /rust/*.ps1
 

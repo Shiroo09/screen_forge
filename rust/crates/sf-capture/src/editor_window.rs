@@ -140,6 +140,15 @@ mod imp {
             let _ = ShowWindow(hwnd, SW_SHOW);
             let _ = SetForegroundWindow(hwnd);
 
+            if std::env::var_os("SF_DEBUG").is_some() {
+                let mut wr = windows::Win32::Foundation::RECT::default();
+                let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut wr);
+                eprintln!(
+                    "DBG vxvywh=({vx},{vy},{vw},{vh}) winrect=({},{},{},{}) shot={}x{}",
+                    wr.left, wr.top, wr.right, wr.bottom, state.shot.width, state.shot.height
+                );
+            }
+
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
                 let _ = DispatchMessageW(&msg);
@@ -201,6 +210,12 @@ mod imp {
             }
             WM_LBUTTONDOWN => {
                 let (x, y) = (lo(lparam), hi(lparam));
+                if std::env::var_os("SF_DEBUG").is_some() {
+                    let cur = windows::Win32::Foundation::POINT::default();
+                    let mut cur = cur;
+                    let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut cur);
+                    eprintln!("DBG down c=({x},{y}) cur=({},{}) origin={:?}", cur.x, cur.y, s.origin);
+                }
                 match s.phase {
                     Phase::Selecting => s.selection.begin(x, y),
                     Phase::Drawing => {
@@ -214,6 +229,9 @@ mod imp {
             }
             WM_LBUTTONUP => {
                 let (x, y) = (lo(lparam), hi(lparam));
+                if std::env::var_os("SF_DEBUG").is_some() {
+                    eprintln!("DBG up c=({x},{y}) phase={}", if s.phase == Phase::Selecting { "sel" } else { "draw" });
+                }
                 match s.phase {
                     Phase::Selecting => {
                         if let Some(rect) = s.selection.finish(MIN_SIZE) {

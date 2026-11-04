@@ -196,6 +196,12 @@ pub struct ScreenForgeApp {
 impl ScreenForgeApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::install(&cc.egui_ctx);
+        // egui picks up the OS scale factor, but the default is conservative on
+        // high-DPI displays. Clamp to at least 1.0 so the UI is never tiny.
+        let ppp = cc.egui_ctx.pixels_per_point();
+        if ppp < 1.0 {
+            cc.egui_ctx.set_pixels_per_point(1.0);
+        }
         let (settings, _) = sf_settings::AppSettings::load(&sf_settings::settings_path());
         Self {
             settings,

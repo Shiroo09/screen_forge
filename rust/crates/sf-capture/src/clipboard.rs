@@ -72,7 +72,16 @@ mod imp {
 
             let _ = GlobalUnlock(handle);
 
-            if OpenClipboard(None).is_err() {
+            // Pano başka bir süreç tarafından kilitli olabilir; kısa süre yeniden dene.
+            let mut opened = false;
+            for _ in 0..10 {
+                if OpenClipboard(None).is_ok() {
+                    opened = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+            if !opened {
                 let _ = windows::Win32::Foundation::GlobalFree(Some(handle));
                 return Err("OpenClipboard failed".to_string());
             }

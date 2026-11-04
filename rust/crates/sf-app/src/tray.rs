@@ -11,6 +11,10 @@ use std::sync::Arc;
 pub fn run_tray() {
     let (settings, _) = sf_settings::AppSettings::load(&sf_settings::settings_path());
 
+    // Keep the HKCU Run entry in sync with the saved preference on every start,
+    // so the "başlangıçta çalıştır" checkbox actually takes effect.
+    let _ = sf_settings::set_startup_enabled(settings.launch_at_startup);
+
     let out_dir = if std::path::PathBuf::from(&settings.save_directory).exists() {
         std::path::PathBuf::from(&settings.save_directory)
     } else {

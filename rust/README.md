@@ -63,6 +63,22 @@ Win32 capture underneath. **76 MB working set** at idle versus the C# app's
 cargo run -p sf-app
 ```
 
+## Windows installer
+
+`setup-rust.iss` (Inno Setup 6) packages the tray app. It installs
+`screenforge-app.exe` into Program Files, adds Start Menu + desktop shortcuts, and
+offers the same HKCU `Run` auto-start task as the C# installer. The UI is Turkish.
+`screenforge.exe` (CLI) is bundled too, but only if it was built.
+
+```
+cargo build --release -p sf-app       # required
+cargo build --release -p sf-cli       # optional, adds the CLI
+iscc setup-rust.iss                   # from the rust/ directory
+```
+
+Output: `rust/setup/ScreenForge-Setup.exe`. The app is a single self-contained
+binary — no DLLs, no .NET runtime, no installer-side prerequisites.
+
 ## Running it
 
 `sf-cli` proves the pipeline end to end — real screen capture feeding the ported
