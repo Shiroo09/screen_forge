@@ -50,6 +50,19 @@ hand-written.
 cargo test --workspace    # 122 tests: unit + golden byte-compare + decode round-trip + settings contract
 ```
 
+## Desktop app (Rust + egui)
+
+![ScreenForge](docs/readme/app-rust.png)
+
+`sf-app` is the full desktop application in pure Rust — no WPF, no XAML. Dark
+theme, six tabs (Capture / Annotate / Record / GIF / Translate / Settings), real
+Win32 capture underneath. **76 MB working set** at idle versus the C# app's
+516 MB private commit.
+
+```
+cargo run -p sf-app
+```
+
 ## Running it
 
 `sf-cli` proves the pipeline end to end — real screen capture feeding the ported

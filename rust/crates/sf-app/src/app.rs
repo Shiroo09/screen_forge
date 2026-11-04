@@ -72,16 +72,6 @@ impl ImageBuf {
         }
     }
 
-    pub fn from_bgra(width: i32, height: i32, bgra: Vec<u8>) -> Self {
-        Self {
-            width,
-            height,
-            bgra,
-            texture: None,
-            dirty: true,
-        }
-    }
-
     /// The display texture, rebuilt on first use or after `dirty`.
     pub fn texture(&mut self, ctx: &egui::Context) -> egui::TextureHandle {
         if self.texture.is_none() || self.dirty {
@@ -89,10 +79,6 @@ impl ImageBuf {
             self.dirty = false;
         }
         self.texture.clone().unwrap()
-    }
-
-    pub fn mark_dirty(&mut self) {
-        self.dirty = true;
     }
 
     fn build_texture(&self, ctx: &egui::Context) -> egui::TextureHandle {
@@ -198,12 +184,6 @@ impl ScreenForgeApp {
         self.toast = Some((msg.into(), 3.5));
     }
 
-    /// Renders the current shapes onto the captured image buffer.
-    pub fn render_shapes_on(&self, img: &mut ImageBuf) {
-        use sf_draw::canvas::Canvas;
-        let mut canvas = Canvas::new(&mut img.bgra, img.width, img.height);
-        sf_draw::model::render_all(&mut canvas, &self.shapes);
-    }
 }
 
 impl eframe::App for ScreenForgeApp {
@@ -265,6 +245,7 @@ impl ScreenForgeApp {
             });
     }
 
+    #[allow(deprecated)]
     fn toast_ui(&mut self, ctx: &egui::Context) {
         let Some((msg, ttl)) = &mut self.toast else {
             return;
