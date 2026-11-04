@@ -35,6 +35,7 @@ framework overhead a tray app shouldn't carry.
 | `sf-capture` | `ScreenForge/Gif/Input/*`, `Hotkeys/WindowsReservedHotkeys.cs` (pure) | Ported, contract-tested |
 | `sf-overlay` | `ScreenForge/Presenter/ArrowBend.cs`, `Subtitle/SubtitleMath.cs` | Ported, contract-tested |
 | `sf-draw` | `ScreenForge/Editor/ShapeItems.cs`, `StepBlurImageItems.cs` (blur) | Ported, pure-Rust rasterizer |
+| `sf-record` | `ScreenForge/Record/MfH264Writer.cs` | Ported, Media Foundation H.264 |
 
 Verified: `sf-gif` produces output **byte-for-byte identical** to the C#
 encoder across Neural/Octree quantization, Floyd-Steinberg dithering, global vs

@@ -94,6 +94,17 @@ fn run(args: &[String]) -> Result<String, String> {
             write_png(out, shot.width, shot.height, &shot.bgra)?;
             Ok(format!("wrote annotated {out} ({}x{})", shot.width, shot.height))
         }
+        Some("mp4") => {
+            // mp4 <out.mp4> <seconds> [fps] — real-time screen recording to H.264.
+            let out = args.get(1).ok_or("mp4: missing output path")?;
+            let seconds: f64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3.0);
+            let fps: i32 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(15);
+            let stats = record_mp4(out, seconds, fps)?;
+            Ok(format!(
+                "wrote {out} ({} frames, {:.1}s)",
+                stats, seconds.max(0.1)
+            ))
+        }
         Some("select") => {
             // select <out.png> — show the region picker, then save the selection.
             let out = args.get(1).ok_or("select: missing output path")?;
@@ -130,7 +141,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|shot|select|edit|annotate|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|annotate|run|settings> ...".to_string()),
     }
 }
 
@@ -405,4 +416,54 @@ fn edit_flow(out: &str) -> Result<String, String> {
         "edited ({x},{y},{w},{h}) with {} shape(s) -> wrote {out}",
         result.shapes.len()
     ))
+}
+
+/// Real-time screen recording to an H.264 MP4 via Media Foundation.
+fn record_mp4(path: &str, seconds: f64, fps: i32) -> Result<usize, String> {
+    use sf_media::bits_per_second;
+
+    let fps = fps.clamp(1, 60);
+    let total = ((seconds.max(0.1)) * fps as f64).round() as usize;
+
+    // H.264 wants even dimensions; cap the long edge (the C# app uses 2560) so a
+    // 4K desktop does not encode at full size and crawl.
+    let first = sf_capture::capture_virtual_screen()?;
+    let (w, h) = sf_media::cap_long_edge(first.width, first.height, sf_media::MAX_LONG_EDGE);
+    if w == 0 || h == 0 {
+        return Err("screen capture is degenerate".to_string());
+    }
+
+    let bitrate = bits_per_second(sf_settings::VideoQuality::High, w, h);
+    let mut writer = sf_record::Mp4Writer::new(path, w, h, fps, bitrate)?;
+    let frame_dur = writer.frame_duration();
+
+    let interval = std::time::Duration::from_millis((1000 / fps) as u64);
+    let mut first = Some(first);
+
+    for i in 0..total {
+        let start = std::time::Instant::now();
+        let shot = match first.take() {
+            Some(f) => f,
+            None => sf_capture::capture_virtual_screen()?,
+        };
+
+        // Crop/resize to the even, capped frame if the screen was reduced.
+        let frame = if shot.width == w && shot.height == h {
+            shot.bgra
+        } else {
+            sf_edit::image_ops::resize_pixels(&shot.bgra, shot.width, shot.height, w, h)
+        };
+
+        writer.write_bgra(&frame, i as i64 * frame_dur)?;
+
+        if i + 1 < total {
+            let spent = start.elapsed();
+            if spent < interval {
+                std::thread::sleep(interval - spent);
+            }
+        }
+    }
+
+    writer.finish()?;
+    Ok(total)
 }

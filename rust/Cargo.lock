@@ -196,6 +196,8 @@ dependencies = [
  "sf-draw",
  "sf-edit",
  "sf-gif",
+ "sf-media",
+ "sf-record",
  "sf-settings",
  "windows",
 ]
@@ -240,6 +242,14 @@ name = "sf-overlay"
 version = "0.1.0"
 dependencies = [
  "sf-edit",
+]
+
+[[package]]
+name = "sf-record"
+version = "0.1.0"
+dependencies = [
+ "sf-media",
+ "windows",
 ]
 
 [[package]]

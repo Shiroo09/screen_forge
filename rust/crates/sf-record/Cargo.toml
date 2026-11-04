@@ -1,0 +1,17 @@
+[package]
+name = "sf-record"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "MP4 H.264 recording via Media Foundation (Rust port of ScreenForge.Record.MfH264Writer)"
+
+[dependencies]
+sf-media = { path = "../sf-media" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+] }

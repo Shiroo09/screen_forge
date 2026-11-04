@@ -15,7 +15,9 @@ sf-gif = { path = "../sf-gif" }
 sf-capture = { path = "../sf-capture" }
 sf-edit = { path = "../sf-edit" }
 sf-draw = { path = "../sf-draw" }
+sf-record = { path = "../sf-record" }
 sf-settings = { path = "../sf-settings" }
+sf-media = { path = "../sf-media" }
 
 png = "0.17"
 
