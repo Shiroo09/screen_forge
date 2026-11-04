@@ -206,6 +206,12 @@ fn run(args: &[String]) -> Result<String, String> {
             write_by_extension(output, w, h, &composed)?;
             Ok(format!("removebg: {w}x{h} konu kesildi -> {output}"))
         }
+        Some("presenter") => {
+            // presenter — live drawing overlay (Esc to exit; 1=pen 2=laser 3=spotlight).
+            eprintln!("sunum katmanı açılıyor — Esc ile çık, 1=kalem 2=lazer 3=spotlight");
+            sf_capture::presenter_window::run();
+            Ok("sunum katmanı kapandı".to_string())
+        }
         Some("update") => {
             // update <manifest-url> [current-version] [--apply] — check for and
             // optionally download a newer release. No manifest URL configured →
@@ -285,7 +291,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|gifedit|annotate|reverse|translate|removebg|update|gui|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|gifedit|annotate|reverse|translate|removebg|update|presenter|gui|run|settings> ...".to_string()),
     }
 }
 
