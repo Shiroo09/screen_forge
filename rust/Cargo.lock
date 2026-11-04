@@ -1250,6 +1250,7 @@ dependencies = [
  "gif",
  "image",
  "png 0.17.16",
+ "sf-bg",
  "sf-capture",
  "sf-draw",
  "sf-edit",

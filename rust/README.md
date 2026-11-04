@@ -65,6 +65,7 @@ cargo run -p sf-cli -- reverse out.png lens          # reverse-image-search URL
 cargo run -p sf-cli -- translate "Good morning"       # translate (settings target)
 cargo run -p sf-cli -- gui                           # settings window (Win32 controls)
 cargo run -p sf-cli -- gifedit in.gif out.gif --keep 1 --remove 1  # edit a GIF
+cargo run -p sf-cli -- removebg in.png out.png u2netp.onnx        # cut out the subject
 cargo run -p sf-cli -- run                           # tray + hotkey, driven by %APPDATA% settings
 ```
 

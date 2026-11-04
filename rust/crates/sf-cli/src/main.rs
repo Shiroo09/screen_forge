@@ -32,6 +32,17 @@ fn flag_value(args: &[String], name: &str) -> Option<i32> {
     args.get(idx + 1).and_then(|v| v.parse().ok())
 }
 
+/// Parses "r,g,b" (0-255 each) into a triple.
+fn parse_rgb(s: Option<&str>) -> Option<[u8; 3]> {
+    let s = s?;
+    let parts: Vec<u8> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+    if parts.len() == 3 {
+        Some([parts[0], parts[1], parts[2]])
+    } else {
+        None
+    }
+}
+
 fn parse_u32(s: &str) -> Option<u32> {
     let s = s.trim();
     match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -170,6 +181,31 @@ fn run(args: &[String]) -> Result<String, String> {
                 decoded.width, decoded.height
             ))
         }
+        Some("removebg") => {
+            // removebg <in.png> <out.png> <model.onnx> [r,g,b] — cut the subject
+            // out and place it on a solid background.
+            let input = args.get(1).ok_or("removebg: missing input image")?;
+            let output = args.get(2).ok_or("removebg: missing output image")?;
+            let model_path = args.get(3).ok_or("removebg: missing u2netp.onnx path")?;
+
+            let img = image::open(input).map_err(|e| format!("open {input}: {e}"))?;
+            let rgba = img.to_rgba8();
+            let (w, h) = (rgba.width() as i32, rgba.height() as i32);
+            // RGBA → BGRA for the model input.
+            let mut bgra = rgba.into_raw();
+            for px in bgra.chunks_exact_mut(4) {
+                px.swap(0, 2);
+            }
+
+            let background = parse_rgb(args.get(4).map(String::as_str)).unwrap_or([255, 255, 255]);
+
+            let mut model = sf_bg::model::SubjectModel::load(model_path)?;
+            let (mask, _side) = model.segment(&bgra, w, h)?;
+            let composed = sf_bg::composite_on_solid(&bgra, &mask, background);
+
+            write_by_extension(output, w, h, &composed)?;
+            Ok(format!("removebg: {w}x{h} konu kesildi -> {output}"))
+        }
         Some("update") => {
             // update <manifest-url> [current-version] [--apply] — check for and
             // optionally download a newer release. No manifest URL configured →
@@ -249,7 +285,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|gifedit|annotate|reverse|translate|update|gui|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|gifedit|annotate|reverse|translate|removebg|update|gui|run|settings> ...".to_string()),
     }
 }
 
