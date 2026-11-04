@@ -46,3 +46,6 @@ iscc_err.txt
 
 # u2netp model copy for sf-bg tests (canonical copy lives in ScreenForge/Models)
 /rust/crates/sf-bg/u2netp.onnx
+
+# scratch
+/finalshot.ps1
