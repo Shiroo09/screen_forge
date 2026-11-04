@@ -29,6 +29,7 @@ pub fn edit_region() -> Option<EditResult> {
 #[cfg(windows)]
 mod imp {
     use super::{EditResult, SelectionRect};
+    use crate::overlay_chrome::{self, Clickable, Hit, ModeChoice};
     use crate::selection::SelectionState;
     use sf_draw::canvas::Canvas;
     use sf_draw::model::{self, Shape, Tool};
@@ -37,9 +38,9 @@ mod imp {
     use windows::core::w;
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::Graphics::Gdi::{
-        BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FrameRect, InvalidateRect,
-        StretchDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC, HGDIOBJ,
-        PAINTSTRUCT, SRCCOPY,
+        BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FrameRect, GetDC, GetDeviceCaps,
+        InvalidateRect, ReleaseDC, StretchDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        DIB_RGB_COLORS, HDC, HGDIOBJ, LOGPIXELSY, PAINTSTRUCT, SRCCOPY,
     };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -75,11 +76,21 @@ mod imp {
         pen_points: Vec<(f32, f32)>,
         step_count: u32,
         cancelled: bool,
+        /// Chrome (mod çubuğu / araç şeridi) için ölçek; 96 DPI'da 1.0.
+        scale: f32,
+        /// Yakalanan monitörün genişliği (istemci genişliğiyle aynı).
+        mon_w: i32,
+        /// Son paint'te çizilen tıklanabilir alanlar; isabet testi buradan yapılır.
+        clickables: Vec<Clickable>,
     }
 
     pub fn edit_region() -> Option<EditResult> {
-        let shot = crate::screen::capture_virtual_screen().ok()?;
-        let (vx, vy, vw, vh) = crate::screen::virtual_screen_bounds();
+        let cursor = cursor_monitor();
+        let shot = match cursor {
+            Some((x, y, w, h)) => crate::screen::capture_region(x, y, w, h).ok()?,
+            None => crate::screen::capture_virtual_screen().ok()?,
+        };
+        let (vx, vy, vw, vh) = cursor.unwrap_or_else(crate::screen::virtual_screen_bounds);
 
         unsafe {
             let instance = GetModuleHandleW(None).ok()?;
@@ -110,6 +121,9 @@ mod imp {
                 pen_points: Vec::new(),
                 step_count: 0,
                 cancelled: false,
+                scale: 1.0,
+                mon_w: vw,
+                clickables: Vec::new(),
             };
 
             let hwnd = CreateWindowExW(
@@ -137,17 +151,21 @@ mod imp {
                 return None;
             }
 
+            // Ölçek: DPI'a göre krom boyutu. Pencere DPI-farkında olmadığı için
+            // sistem DPI'ı yeterli.
+            {
+                let hdc = GetDC(Some(hwnd));
+                if !hdc.is_invalid() {
+                    let dpi = GetDeviceCaps(Some(hdc), LOGPIXELSY);
+                    let _ = ReleaseDC(Some(hwnd), hdc);
+                    if dpi > 0 {
+                        state.scale = (dpi as f32 / 96.0).clamp(1.0, 2.0);
+                    }
+                }
+            }
+
             let _ = ShowWindow(hwnd, SW_SHOW);
             let _ = SetForegroundWindow(hwnd);
-
-            if std::env::var_os("SF_DEBUG").is_some() {
-                let mut wr = windows::Win32::Foundation::RECT::default();
-                let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut wr);
-                eprintln!(
-                    "DBG vxvywh=({vx},{vy},{vw},{vh}) winrect=({},{},{},{}) shot={}x{}",
-                    wr.left, wr.top, wr.right, wr.bottom, state.shot.width, state.shot.height
-                );
-            }
 
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
@@ -201,7 +219,10 @@ mod imp {
                     Phase::Selecting => s.selection.update(x, y),
                     Phase::Drawing => {
                         if s.tool == Tool::Pen && !s.pen_points.is_empty() {
-                            s.pen_points.push((x as f32, y as f32));
+                            // Şekiller sanal ekran koordinatında saklanır (kırpma
+                            // sırasında bölge başlangıcı çıkarılır); istemci
+                            // koordinatına pencere başlangıcını ekle.
+                            s.pen_points.push(virt(s, x, y));
                         }
                         let _ = InvalidateRect(Some(hwnd), None, false);
                     }
@@ -210,18 +231,18 @@ mod imp {
             }
             WM_LBUTTONDOWN => {
                 let (x, y) = (lo(lparam), hi(lparam));
-                if std::env::var_os("SF_DEBUG").is_some() {
-                    let cur = windows::Win32::Foundation::POINT::default();
-                    let mut cur = cur;
-                    let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut cur);
-                    eprintln!("DBG down c=({x},{y}) cur=({},{}) origin={:?}", cur.x, cur.y, s.origin);
+                // Önce krom: araç çubuğu tıklaması çizim/seçim başlatmaz.
+                if let Some(hit) = hit_test(s, x, y) {
+                    apply_hit(hwnd, s, hit);
+                    let _ = InvalidateRect(Some(hwnd), None, false);
+                    return LRESULT(0);
                 }
                 match s.phase {
                     Phase::Selecting => s.selection.begin(x, y),
                     Phase::Drawing => {
-                        s.drag_start = (x as f32, y as f32);
+                        s.drag_start = virt(s, x, y);
                         if s.tool == Tool::Pen {
-                            s.pen_points = vec![(x as f32, y as f32)];
+                            s.pen_points = vec![virt(s, x, y)];
                         }
                     }
                 }
@@ -229,8 +250,9 @@ mod imp {
             }
             WM_LBUTTONUP => {
                 let (x, y) = (lo(lparam), hi(lparam));
-                if std::env::var_os("SF_DEBUG").is_some() {
-                    eprintln!("DBG up c=({x},{y}) phase={}", if s.phase == Phase::Selecting { "sel" } else { "draw" });
+                // Krom üzerinde bırakılan tıklama seçim/şekil üretmez.
+                if hit_test(s, x, y).is_some() {
+                    return LRESULT(0);
                 }
                 match s.phase {
                     Phase::Selecting => {
@@ -250,7 +272,8 @@ mod imp {
                         }
                     }
                     Phase::Drawing => {
-                        commit_shape(s, x as f32, y as f32);
+                        let (vx, vy) = virt(s, x, y);
+                        commit_shape(s, vx, vy);
                         let _ = InvalidateRect(Some(hwnd), None, false);
                     }
                 }
@@ -281,6 +304,60 @@ mod imp {
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        }
+    }
+
+    /// İmlecin bulunduğu monitörün (x, y, w, h) sınırları. Overlay yalnız o
+    /// monitörü kaplar; çoklu monitörde krom sanal masaüstünün ortasına
+    /// düşmesin (C# `GetUiMonitorDip` davranışı).
+    fn cursor_monitor() -> Option<(i32, i32, i32, i32)> {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+        unsafe {
+            let mut pt = POINT::default();
+            windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt).ok()?;
+            let mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+            let mut info = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            if !GetMonitorInfoW(mon, &mut info).as_bool() {
+                return None;
+            }
+            let r = info.rcMonitor;
+            Some((r.left, r.top, r.right - r.left, r.bottom - r.top))
+        }
+    }
+
+    /// İstemci (pencere) koordinatını sanal ekran koordinatına çevirir. Seçim
+    /// bölgesiyle aynı uzay: şekiller sanal koordinatta saklanır, çağıran kırpma
+    /// sırasında bölge başlangıcını çıkarır.
+    fn virt(s: &State, x: i32, y: i32) -> (f32, f32) {
+        (x as f32 + s.origin.0 as f32, y as f32 + s.origin.1 as f32)
+    }
+
+    /// İstemci koordinatı son paint'te çizilen krom alanlarından birine düşüyor mu.
+    fn hit_test(s: &State, x: i32, y: i32) -> Option<Hit> {
+        s.clickables.iter().find_map(|c| {
+            let r = c.rect;
+            (x >= r.left && x < r.right && y >= r.top && y < r.bottom).then_some(c.hit)
+        })
+    }
+
+    fn apply_hit(hwnd: HWND, s: &mut State, hit: Hit) {
+        match hit {
+            // Tam ekran modu overlay içinde seçim gerektirmediği için bölgeyi
+            // doğrudan tüm ekran yapar ve bitirir.
+            Hit::Mode(ModeChoice::FullScreen) => {
+                s.region = Some((s.origin.0, s.origin.1, s.shot.width, s.shot.height));
+                s.cancelled = false;
+                let _ = unsafe { DestroyWindow(hwnd) };
+            }
+            Hit::Mode(ModeChoice::Region) => {}
+            Hit::Tool(t) => s.tool = t,
+            Hit::Color(rgb) => s.color = Rgba::rgb(rgb),
         }
     }
 
@@ -350,7 +427,7 @@ mod imp {
         (x0.min(x1), y0.min(y1), (x1 - x0).abs(), (y1 - y0).abs())
     }
 
-    unsafe fn paint(hdc: HDC, s: &State) {
+    unsafe fn paint(hdc: HDC, s: &mut State) {
         let (w, h) = (s.shot.width, s.shot.height);
         let info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
@@ -367,10 +444,17 @@ mod imp {
 
         // Draw the frozen screenshot plus committed shapes: render shapes onto a
         // copy of the capture, then blit that so the drawing appears live.
+        // Şekiller sanal koordinatta; tampon istemci koordinatında, pencere
+        // başlangıcını çıkararak hizala.
         let mut buffer = s.shot.bgra.clone();
         {
             let mut canvas = Canvas::new(&mut buffer, w, h);
-            model::render_all(&mut canvas, &s.shapes);
+            for shape in &s.shapes {
+                model::render(
+                    &mut canvas,
+                    &shape.translate(-(s.origin.0 as f32), -(s.origin.1 as f32)),
+                );
+            }
         }
 
         let _ = StretchDIBits(
@@ -401,6 +485,38 @@ mod imp {
             let white = CreateSolidBrush(windows::Win32::Foundation::COLORREF(0x00FFFFFF));
             let _ = FrameRect(hdc, &frame, white);
             let _ = DeleteObject(HGDIOBJ(white.0));
+        }
+
+        // Krom: seçim öncesi mod çubuğu + ipucu, seçim sonrası araç şeridi.
+        s.clickables.clear();
+        match s.phase {
+            Phase::Selecting => {
+                s.clickables =
+                    overlay_chrome::draw_mode_bar(hdc, s.mon_w / 2, s.scale, ModeChoice::Region);
+                let _ = overlay_chrome::draw_hint(
+                    hdc,
+                    s.mon_w / 2,
+                    s.scale,
+                    if s.selection.is_dragging() {
+                        "Bırakınca düzenlemeye geçilir"
+                    } else {
+                        "Alan seçmek için sürükleyin · Esc: iptal"
+                    },
+                );
+            }
+            Phase::Drawing => {
+                let region = s.region.unwrap_or((0, 0, w, h));
+                s.clickables = overlay_chrome::draw_tool_strip(
+                    hdc,
+                    s.mon_w / 2,
+                    w,
+                    h,
+                    (region.0 - s.origin.0, region.1 - s.origin.1, region.2, region.3),
+                    s.scale,
+                    s.tool,
+                    ((s.color.r as u32) << 16) | ((s.color.g as u32) << 8) | s.color.b as u32,
+                );
+            }
         }
     }
 

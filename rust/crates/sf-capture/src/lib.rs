@@ -18,6 +18,7 @@ pub mod key_labels;
 pub mod screen;
 pub mod keys;
 pub mod overlay;
+pub mod overlay_chrome;
 pub mod reserved_hotkeys;
 
 pub use clipboard::copy_bgra_to_clipboard;
