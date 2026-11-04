@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/sf-cli", "crates/sf-gif", "crates/sf-settings", "crates/sf-media", "crates/sf-net", "crates/sf-edit", "crates/sf-capture", "crates/sf-overlay"]
+members = ["crates/sf-cli", "crates/sf-draw", "crates/sf-gif", "crates/sf-settings", "crates/sf-media", "crates/sf-net", "crates/sf-edit", "crates/sf-capture", "crates/sf-overlay"]
 
 [workspace.package]
 version = "0.1.0"

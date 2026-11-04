@@ -1,0 +1,9 @@
+[package]
+name = "sf-draw"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Software BGRA rasterizer for screenshot annotation (Rust replacement for the SkiaSharp shape drawing in ScreenForge.Editor)"
+
+[dependencies]

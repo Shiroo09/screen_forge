@@ -14,6 +14,7 @@ path = "src/main.rs"
 sf-gif = { path = "../sf-gif" }
 sf-capture = { path = "../sf-capture" }
 sf-edit = { path = "../sf-edit" }
+sf-draw = { path = "../sf-draw" }
 sf-settings = { path = "../sf-settings" }
 
 png = "0.17"

@@ -36,3 +36,29 @@ fn capture_to_gif_roundtrip() {
     let frame = reader.read_next_frame().expect("read").expect("frame present");
     assert_eq!(frame.buffer.len(), (first.width * first.height * 4) as usize);
 }
+
+#[test]
+#[cfg(windows)]
+fn annotation_marks_captured_pixels() {
+    use sf_draw::canvas::{Canvas, Rgba};
+    use sf_draw::shapes::{self, Stroke};
+
+    let mut shot = sf_capture::capture_virtual_screen().expect("capture");
+    let before = shot.bgra.clone();
+
+    {
+        let mut c = Canvas::new(&mut shot.bgra, shot.width, shot.height);
+        shapes::draw_rect(&mut c, 50.0, 50.0, 200.0, 120.0, Stroke::new(Rgba::rgb(0xFF0000), 4.0));
+        shapes::draw_arrow(&mut c, 60.0, 220.0, 300.0, 240.0, Stroke::new(Rgba::rgb(0x00FF00), 4.0));
+        shapes::draw_step(&mut c, 120.0, 320.0, 24.0, 1, Rgba::rgb(0xE5484D), Rgba::rgb(0xFFFFFF));
+    }
+
+    // The annotated buffer must differ from the raw capture.
+    let changed = before
+        .iter()
+        .zip(shot.bgra.iter())
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(changed > 500, "annotation changed only {changed} bytes");
+    assert_eq!(shot.bgra.len(), before.len(), "buffer size must not change");
+}

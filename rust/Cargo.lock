@@ -192,11 +192,16 @@ dependencies = [
  "gif",
  "png",
  "sf-capture",
+ "sf-draw",
  "sf-edit",
  "sf-gif",
  "sf-settings",
  "windows",
 ]
+
+[[package]]
+name = "sf-draw"
+version = "0.1.0"
 
 [[package]]
 name = "sf-edit"

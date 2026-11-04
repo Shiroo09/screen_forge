@@ -80,6 +80,15 @@ fn run(args: &[String]) -> Result<String, String> {
             write_png(&out, shot.width, shot.height, &shot.bgra)?;
             Ok(format!("copied to clipboard + wrote {out} ({}x{})", shot.width, shot.height))
         }
+        Some("annotate") => {
+            // annotate <out.png> — capture the screen and draw a sample
+            // annotation, proving capture -> rasterizer -> save end to end.
+            let out = args.get(1).ok_or("annotate: missing output path")?;
+            let mut shot = sf_capture::capture_virtual_screen()?;
+            annotate_sample(&mut shot);
+            write_png(out, shot.width, shot.height, &shot.bgra)?;
+            Ok(format!("wrote annotated {out} ({}x{})", shot.width, shot.height))
+        }
         Some("select") => {
             // select <out.png> — show the region picker, then save the selection.
             let out = args.get(1).ok_or("select: missing output path")?;
@@ -116,7 +125,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|shot|select|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|shot|select|annotate|run|settings> ...".to_string()),
     }
 }
 
@@ -323,4 +332,37 @@ fn run_tray(seconds: f64, modifiers: u32, vk: u32) -> Result<String, String> {
 #[cfg(not(windows))]
 fn run_tray(_seconds: f64, _modifiers: u32, _vk: u32) -> Result<String, String> {
     Err("the tray shell is only supported on Windows".to_string())
+}
+
+/// Draws a sample annotation (rect, arrow, ellipse, numbered step, pen) onto a
+/// captured frame. The interactive editor will drive the same `sf_draw` calls
+/// from mouse input; this shows the rasterizer works on real captured pixels.
+fn annotate_sample(shot: &mut sf_capture::Captured) {
+    use sf_draw::canvas::{Canvas, Rgba};
+    use sf_draw::shapes::{self, Stroke};
+
+    let orange = Rgba::rgb(0xEA6F12);
+    let red = Rgba::rgb(0xE5484D);
+    let white = Rgba::rgb(0xFFFFFF);
+
+    let mut c = Canvas::new(&mut shot.bgra, shot.width, shot.height);
+
+    // A rectangle near the top-left, a bend arrow, an ellipse and a step badge —
+    // all scaled to the screen so it is visible on any resolution.
+    let s = (shot.width.min(shot.height) as f32 / 60.0).max(2.0);
+    let (ox, oy) = (120.0 * s / 4.0 * 4.0, 120.0 * s / 4.0 * 4.0);
+
+    shapes::draw_rect(&mut c, ox, oy, 40.0 * s, 24.0 * s, Stroke::new(orange, 2.0 * s));
+    shapes::draw_arrow(&mut c, ox + 50.0 * s, oy + 30.0 * s, ox + 120.0 * s, oy + 10.0 * s, Stroke::new(red, 2.0 * s));
+    shapes::draw_ellipse(&mut c, ox + 150.0 * s, oy, 36.0 * s, 36.0 * s, Stroke::new(white, 2.0 * s));
+    shapes::draw_step(&mut c, ox + 20.0 * s, oy + 60.0 * s, 14.0 * s, 1, red, white);
+    shapes::draw_stroke_path(
+        &mut c,
+        &[
+            (ox + 60.0 * s, oy + 70.0 * s),
+            (ox + 80.0 * s, oy + 90.0 * s),
+            (ox + 110.0 * s, oy + 60.0 * s),
+        ],
+        Stroke::new(orange, 2.0 * s),
+    );
 }
