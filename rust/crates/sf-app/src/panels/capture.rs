@@ -10,6 +10,7 @@ enum Action {
     Region,
     Copy,
     Save,
+    Presenter,
 }
 
 pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
@@ -52,6 +53,9 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
                 }
                 if action_button(ui, "Kaydet", false).clicked() {
                     action = Some(Action::Save);
+                }
+                if action_button(ui, "Sunum katmanı", false).clicked() {
+                    action = Some(Action::Presenter);
                 }
             });
         });
@@ -157,6 +161,11 @@ fn run(app: &mut ScreenForgeApp, action: Action, has_image: bool) {
                 Ok(()) => app.notify("panoya kopyalandı"),
                 Err(e) => app.notify(format!("hata: {e}")),
             }
+        }
+        Action::Presenter => {
+            app.notify("sunum katmanı açılıyor — Esc ile çık");
+            sf_capture::presenter_window::run();
+            app.notify("sunum katmanı kapandı");
         }
         Action::Save => {
             if !has_image {
