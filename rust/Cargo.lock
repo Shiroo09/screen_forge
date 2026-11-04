@@ -181,6 +181,7 @@ dependencies = [
 name = "sf-capture"
 version = "0.1.0"
 dependencies = [
+ "sf-draw",
  "sf-settings",
  "windows",
 ]

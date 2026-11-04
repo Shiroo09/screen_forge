@@ -8,6 +8,7 @@ description = "Key labels, reserved-hotkey lookup and input overlay drawing (Rus
 
 [dependencies]
 sf-settings = { path = "../sf-settings" }
+sf-draw = { path = "../sf-draw" }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

@@ -80,6 +80,11 @@ fn run(args: &[String]) -> Result<String, String> {
             write_png(&out, shot.width, shot.height, &shot.bgra)?;
             Ok(format!("copied to clipboard + wrote {out} ({}x{})", shot.width, shot.height))
         }
+        Some("edit") => {
+            // edit <out.png> — pick a region, annotate it, save the result.
+            let out = args.get(1).ok_or("edit: missing output path")?;
+            edit_flow(out)
+        }
         Some("annotate") => {
             // annotate <out.png> — capture the screen and draw a sample
             // annotation, proving capture -> rasterizer -> save end to end.
@@ -125,7 +130,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|shot|select|annotate|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|shot|select|edit|annotate|run|settings> ...".to_string()),
     }
 }
 
@@ -365,4 +370,29 @@ fn annotate_sample(shot: &mut sf_capture::Captured) {
         ],
         Stroke::new(orange, 2.0 * s),
     );
+}
+
+/// Interactive flow: pick a region, annotate it, crop to the region and save.
+fn edit_flow(out: &str) -> Result<String, String> {
+    let result = sf_capture::editor_window::edit_region()
+        .ok_or("edit cancelled")?;
+
+    let (x, y, w, h) = result.region;
+    let mut shot = sf_capture::capture_region(x, y, w, h)?;
+
+    // Shapes were collected in virtual-screen coords; shift them into the crop.
+    let (ox, oy) = (x as f32, y as f32);
+    {
+        use sf_draw::canvas::Canvas;
+        let mut canvas = Canvas::new(&mut shot.bgra, shot.width, shot.height);
+        for shape in &result.shapes {
+            sf_draw::model::render(&mut canvas, &shape.translate(-ox, -oy));
+        }
+    }
+
+    write_png(out, shot.width, shot.height, &shot.bgra)?;
+    Ok(format!(
+        "edited ({x},{y},{w},{h}) with {} shape(s) -> wrote {out}",
+        result.shapes.len()
+    ))
 }

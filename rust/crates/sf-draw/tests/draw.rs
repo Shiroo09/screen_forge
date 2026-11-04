@@ -159,3 +159,60 @@ fn outside_bounds_is_silently_ignored() {
     shapes::draw_rect(&mut c, 100.0, 100.0, 10.0, 10.0, Stroke::new(RED, 2.0));
     assert!(c.get(4, 4).is_some());
 }
+
+// ─── Shape model ──────────────────────────────────────────────────────────────
+
+#[test]
+fn tool_cycles_through_all_tools() {
+    use sf_draw::model::Tool;
+    let mut t = Tool::Rect;
+    let mut seen = vec![t];
+    for _ in 0..6 {
+        t = t.next();
+        seen.push(t);
+    }
+    assert_eq!(t, Tool::Rect, "must return to start after 6 steps");
+    // All six tools appear exactly once.
+    let mut names: Vec<_> = seen.iter().map(|t| t.name()).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), 6);
+}
+
+#[test]
+fn shape_translate_shifts_every_kind() {
+    use sf_draw::model::Shape;
+    let shapes = vec![
+        Shape::Rect { x: 10.0, y: 20.0, w: 5.0, h: 5.0, color: RED },
+        Shape::Arrow { x0: 0.0, y0: 0.0, x1: 10.0, y1: 10.0, color: RED },
+        Shape::Pen { points: vec![(1.0, 1.0), (2.0, 2.0)], color: RED },
+        Shape::Step { cx: 3.0, cy: 4.0, radius: 5.0, number: 1, color: RED },
+    ];
+
+    for s in &shapes {
+        let t = s.translate(-10.0, -20.0);
+        // Round-trip back to the original.
+        assert_eq!(&t.translate(10.0, 20.0), s);
+    }
+}
+
+#[test]
+fn render_all_draws_in_order_on_capture() {
+    use sf_draw::model::{render_all, Shape};
+
+    let mut px = surface(64, 64);
+    let shapes = vec![
+        Shape::Rect { x: 8.0, y: 8.0, w: 40.0, h: 40.0, color: RED },
+        Shape::Step { cx: 32.0, cy: 32.0, radius: 10.0, number: 1, color: BLUE },
+    ];
+    {
+        let mut c = Canvas::new(&mut px, 64, 64);
+        render_all(&mut c, &shapes);
+    }
+
+    let c = Canvas::new(&mut px, 64, 64);
+    // Step (drawn last) paints its badge over the rect centre.
+    assert!(c.get(32, 32).unwrap().b > 150, "badge should cover the centre");
+    // The rect edge is still visible outside the badge.
+    assert!(c.get(8, 28).unwrap().r > 150, "rect edge visible");
+}

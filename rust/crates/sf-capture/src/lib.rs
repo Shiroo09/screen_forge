@@ -6,6 +6,7 @@
 
 pub mod clipboard;
 pub mod hotkey;
+pub mod editor_window;
 pub mod input_hook;
 pub mod overlay_window;
 pub mod selection;
