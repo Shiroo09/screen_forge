@@ -340,12 +340,32 @@ fn run_tray(seconds: f64, modifiers: u32, vk: u32) -> Result<String, String> {
         }
     })?;
 
+    // System tray icon (left-click triggers the same capture as the hotkey).
+    let tray = {
+        let dir = out_dir.clone();
+        let count = Arc::clone(&count);
+        sf_capture::tray::install("ScreenForge — ekran görüntüsü", move || {
+            let n = count.fetch_add(1, Ordering::SeqCst) + 1;
+            if let Some((x, y, w, h)) = sf_capture::overlay_window::pick_region() {
+                if let Ok(shot) = sf_capture::capture_region(x, y, w, h) {
+                    let path = dir.join(format!("tray-{n}.png"));
+                    let _ = write_png(path.to_str().unwrap_or("out.png"), shot.width, shot.height, &shot.bgra);
+                    eprintln!("tray {n}: saved {}", path.display());
+                }
+            }
+        })
+        .ok()
+    };
+
     eprintln!("ScreenForge ready — press the hotkey, drag a region to capture");
 
     if seconds > 0.0 {
         std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
         let n = count.load(Ordering::SeqCst);
         reg.stop();
+        if let Some(t) = tray {
+            t.close();
+        }
         Ok(format!("ran {seconds}s, {n} capture(s) triggered"))
     } else {
         // Stay alive; the hotkey thread owns the message loop.

@@ -9,6 +9,7 @@ pub mod hotkey;
 pub mod editor_window;
 pub mod input_hook;
 pub mod overlay_window;
+pub mod tray;
 pub mod selection;
 pub mod key_labels;
 pub mod screen;
