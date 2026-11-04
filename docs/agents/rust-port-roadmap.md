@@ -77,9 +77,13 @@ screenforge run                  tray shell, Alt+Shift+S captures (hotkey proven
 screenforge settings             reads %APPDATA%\ScreenForge\settings.json
 ```
 
-Still missing for full parity: MP4 recording + audio, the interactive editor UI,
-the settings window, upload/translate wiring, and the two no-Rust-counterpart
-pieces (Windows App SDK AI, Velopack).
+Done since: MP4 (Media Foundation H.264) + WASAPI audio, interactive annotate
+editor (rect/ellipse/arrow/line/pen/step/blur/text), system tray icon, live
+upload client, settings-driven startup.
+
+Still missing for full parity: the settings *window*, GIF editor timeline UI,
+translate overlay wiring, and the two no-Rust-counterpart pieces (Windows App
+SDK AI, Velopack).
 
 The C# app has 369 xunit tests (`ScreenForge.Tests/`) that encode behaviour the
 Rust crates must satisfy — treat them as the acceptance suite, porting the

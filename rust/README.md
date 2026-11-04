@@ -60,7 +60,7 @@ cargo run -p sf-cli -- crop out.png 100 100 400 300 # a region
 cargo run -p sf-cli -- gif out.gif 10 100           # N consecutive captures
 cargo run -p sf-cli -- record out.gif 5 10          # 5 s of real-time recording
 cargo run -p sf-cli -- settings                     # load %APPDATA% settings
-cargo run -p sf-cli -- run                           # tray shell: Alt+Shift+S captures
+cargo run -p sf-cli -- run                           # tray + hotkey, driven by %APPDATA% settings
 ```
 
 `shot` captures and places the image on the Windows clipboard (CF_DIB) as well as

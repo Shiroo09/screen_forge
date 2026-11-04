@@ -120,10 +120,27 @@ fn run(args: &[String]) -> Result<String, String> {
             // the tray, and save a PNG each time it fires. Proves the interactive
             // path end to end: global hotkey -> capture -> file + notification.
             let seconds: f64 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(0.0);
-            // Optional hex modifiers + virtual-key, e.g. "run 0 6 0x78" (Ctrl+Shift+F9).
-            let mods: u32 = args.get(2).and_then(|s| parse_u32(s)).unwrap_or(0x1 | 0x4);
-            let vk: u32 = args.get(3).and_then(|s| parse_u32(s)).unwrap_or(0x53);
-            run_tray(seconds, mods, vk)
+
+            // Hotkey and output come from settings; CLI overrides only for tests.
+            let (settings, first_run) = sf_settings::AppSettings::load(&sf_settings::settings_path());
+            if first_run {
+                eprintln!("(yeni ayar dosyası oluşturuldu: {})", sf_settings::settings_path().display());
+            }
+
+            let mods: u32 = match args.get(2) {
+                Some(s) => parse_u32(s).ok_or("bad modifier flags")?,
+                None => modifiers_from(&settings.region_hotkey),
+            };
+            let vk: u32 = match args.get(3) {
+                Some(s) => parse_u32(s).ok_or("bad virtual key")?,
+                None => vk_from(&settings.region_hotkey).unwrap_or(0x53),
+            };
+            let out_dir = std::path::PathBuf::from(&settings.save_directory);
+            eprintln!(
+                "ayarlar: format={:?} kalite={} klasör={} kısayol={}",
+                settings.output_format, settings.quality, out_dir.display(), settings.region_hotkey.display()
+            );
+            run_tray(seconds, mods, vk, out_dir, settings.output_format, settings.quality)
         }
         Some("settings") => {
             // settings [path] — load settings and print the normalized result.
@@ -290,13 +307,30 @@ fn record_gif(path: &str, seconds: f64, fps: i32) -> Result<RecordStats, String>
 /// `seconds` 0 means run until the process is killed; a positive value exits after
 /// that many seconds, which makes it usable from a test.
 #[cfg(windows)]
-fn run_tray(seconds: f64, modifiers: u32, vk: u32) -> Result<String, String> {
+fn run_tray(
+    seconds: f64,
+    modifiers: u32,
+    vk: u32,
+    out_dir: std::path::PathBuf,
+    format: sf_settings::ImageFormat,
+    quality: i32,
+) -> Result<String, String> {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
     let count = Arc::new(AtomicU32::new(0));
-    let out_dir = std::env::temp_dir().join("sf-out");
-    std::fs::create_dir_all(&out_dir).ok();
+    // Save into the settings directory; fall back to temp if it cannot be created.
+    let out_dir = if std::fs::create_dir_all(&out_dir).is_ok() {
+        out_dir
+    } else {
+        std::env::temp_dir().join("sf-out")
+    };
+    let ext = match format {
+        sf_settings::ImageFormat::Png => "png",
+        sf_settings::ImageFormat::Jpeg => "jpg",
+        sf_settings::ImageFormat::Webp => "webp",
+    };
+    let _ = quality; // PNG is lossless; JPEG/WebP quality is applied by write_image
 
     let count_cb = Arc::clone(&count);
     let dir_cb = out_dir.clone();
@@ -325,7 +359,7 @@ fn run_tray(seconds: f64, modifiers: u32, vk: u32) -> Result<String, String> {
 
         match result {
             Ok(shot) => {
-                let path = dir_cb.join(format!("hotkey-{n}.png"));
+                let path = dir_cb.join(format!("ScreenForge-{n}.{ext}"));
                 if let Err(e) = sf_capture::copy_bgra_to_clipboard(shot.width, shot.height, &shot.bgra) {
                     eprintln!("hotkey {n}: clipboard failed: {e}");
                 }
@@ -348,7 +382,7 @@ fn run_tray(seconds: f64, modifiers: u32, vk: u32) -> Result<String, String> {
             let n = count.fetch_add(1, Ordering::SeqCst) + 1;
             if let Some((x, y, w, h)) = sf_capture::overlay_window::pick_region() {
                 if let Ok(shot) = sf_capture::capture_region(x, y, w, h) {
-                    let path = dir.join(format!("tray-{n}.png"));
+                    let path = dir.join(format!("ScreenForge-tray-{n}.{ext}"));
                     let _ = write_png(path.to_str().unwrap_or("out.png"), shot.width, shot.height, &shot.bgra);
                     eprintln!("tray {n}: saved {}", path.display());
                 }
@@ -376,7 +410,7 @@ fn run_tray(seconds: f64, modifiers: u32, vk: u32) -> Result<String, String> {
 }
 
 #[cfg(not(windows))]
-fn run_tray(_seconds: f64, _modifiers: u32, _vk: u32) -> Result<String, String> {
+fn run_tray(_seconds: f64, _modifiers: u32, _vk: u32, _out_dir: std::path::PathBuf, _format: sf_settings::ImageFormat, _quality: i32) -> Result<String, String> {
     Err("the tray shell is only supported on Windows".to_string())
 }
 
@@ -486,4 +520,46 @@ fn record_mp4(path: &str, seconds: f64, fps: i32) -> Result<usize, String> {
 
     writer.finish()?;
     Ok(total)
+}
+
+/// Translates a settings hotkey's modifier flags into the Win32 `MOD_*` bits.
+/// `sf_settings::Modifiers` already uses the same bit values, so this is a copy.
+fn modifiers_from(hotkey: &sf_settings::HotkeyConfig) -> u32 {
+    hotkey.modifiers.0 as u32
+}
+
+/// Maps a settings hotkey key name to a Win32 virtual-key code.
+fn vk_from(hotkey: &sf_settings::HotkeyConfig) -> Option<u32> {
+    let key = hotkey.key.trim();
+    if key.is_empty() {
+        return None;
+    }
+
+    // "D1".."D9" → '1'..'9'; "A".."Z" → ASCII; named keys otherwise.
+    let bytes = key.as_bytes();
+    if bytes.len() == 2 && (bytes[0] == b'D' || bytes[0] == b'd') && bytes[1].is_ascii_digit() {
+        return Some(bytes[1] as u32);
+    }
+    if bytes.len() == 1 && bytes[0].is_ascii_uppercase() {
+        return Some(bytes[0] as u32);
+    }
+    Some(match key {
+        "Escape" => 0x1B,
+        "Space" => 0x20,
+        "Tab" => 0x09,
+        "Return" | "Enter" => 0x0D,
+        "F1" => 0x70,
+        "F2" => 0x71,
+        "F3" => 0x72,
+        "F4" => 0x73,
+        "F5" => 0x74,
+        "F6" => 0x75,
+        "F7" => 0x76,
+        "F8" => 0x77,
+        "F9" => 0x78,
+        "F10" => 0x79,
+        "F11" => 0x7A,
+        "F12" => 0x7B,
+        _ => return None,
+    })
 }
