@@ -170,6 +170,24 @@ fn run(args: &[String]) -> Result<String, String> {
                 decoded.width, decoded.height
             ))
         }
+        Some("update") => {
+            // update <manifest-url> [current-version] [--apply] — check for and
+            // optionally download a newer release. No manifest URL configured →
+            // reports that updates are not set up.
+            let url = args.get(1).ok_or("update: missing manifest URL")?;
+            let current = args.get(2).cloned().unwrap_or_else(|| "0.1.0".to_string());
+            match sf_net::update::check(url, &current)? {
+                Some(release) => {
+                    if args.iter().any(|a| a == "--download") {
+                        let path = sf_net::update::download_to_new(&release.url)?;
+                        Ok(format!("yeni sürüm {} indirildi: {}", release.version, path.display()))
+                    } else {
+                        Ok(format!("yeni sürüm mevcut: {} ({})", release.version, release.url))
+                    }
+                }
+                None => Ok(format!("güncel (sürüm {current})")),
+            }
+        }
         Some("gui") => {
             // gui — open the settings window, then save if accepted.
             let (mut settings, _) = sf_settings::AppSettings::load(&sf_settings::settings_path());
@@ -231,7 +249,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|gifedit|annotate|reverse|translate|gui|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|gifedit|annotate|reverse|translate|update|gui|run|settings> ...".to_string()),
     }
 }
 
