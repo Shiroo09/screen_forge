@@ -34,6 +34,44 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
     );
     ui.add_space(10.0);
 
+    // --- Mode bar (Bölge · Tam ekran · Serbest), as in the old overlay -------
+    egui::Frame::new()
+        .fill(theme::SURFACE)
+        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+        .inner_margin(egui::Margin::symmetric(6, 5))
+        .corner_radius(6.0)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for mode in crate::app::CaptureMode::ALL {
+                    let selected = app.capture_mode == mode;
+                    let label = RichText::new(mode.title())
+                        .size(13.0)
+                        .color(if selected { Color32::WHITE } else { theme::TEXT });
+                    let build = move || {
+                        egui::Button::new(label)
+                            .min_size(egui::vec2(96.0, 30.0))
+                            .corner_radius(4.0)
+                    };
+                    let response = if selected {
+                        theme::accent_button(ui, build)
+                    } else {
+                        theme::stateful_button(
+                            ui,
+                            Color32::TRANSPARENT,
+                            theme::SURFACE_HOVER,
+                            theme::SURFACE_HOVER,
+                            build,
+                        )
+                    };
+                    if response.clicked() {
+                        app.capture_mode = mode;
+                    }
+                }
+            });
+        });
+
+    ui.add_space(8.0);
+
     // --- Action buttons -----------------------------------------------------
     egui::Frame::new()
         .fill(theme::SURFACE)
@@ -42,11 +80,18 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
         .corner_radius(8.0)
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                if action_button(ui, "Tam ekran yakala", true).clicked() {
-                    action = Some(Action::FullScreen);
-                }
-                if action_button(ui, "Bölge seç", false).clicked() {
-                    action = Some(Action::Region);
+                // The primary action follows the selected mode.
+                let primary = match app.capture_mode {
+                    crate::app::CaptureMode::Region => "Bölge seç",
+                    crate::app::CaptureMode::FullScreen => "Tam ekran yakala",
+                    crate::app::CaptureMode::Freeform => "Serbest yakala",
+                };
+                if action_button(ui, primary, true).clicked() {
+                    action = Some(match app.capture_mode {
+                        crate::app::CaptureMode::Region => Action::Region,
+                        crate::app::CaptureMode::FullScreen => Action::FullScreen,
+                        crate::app::CaptureMode::Freeform => Action::Region,
+                    });
                 }
                 if action_button(ui, "Panoya kopyala", false).clicked() {
                     action = Some(Action::Copy);

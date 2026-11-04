@@ -39,14 +39,39 @@ impl Tab {
         }
     }
 
-    pub fn icon(self) -> &'static str {
+    /// The line icon drawn next to the tab title.
+    pub fn icon_name(self) -> crate::icons::IconName {
+        use crate::icons::IconName;
         match self {
-            Tab::Capture => "K",
-            Tab::Annotate => "D",
-            Tab::Record => "Y",
-            Tab::Gif => "G",
-            Tab::Translate => "C",
-            Tab::Settings => "A",
+            Tab::Capture => IconName::Camera,
+            Tab::Annotate => IconName::Pen,
+            Tab::Record => IconName::Record,
+            Tab::Gif => IconName::Layers,
+            Tab::Translate => IconName::Translate,
+            Tab::Settings => IconName::Settings,
+        }
+    }
+
+}
+
+/// Capture mode, mirroring the old overlay's mode bar (Bölge · Tam ekran · Serbest).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CaptureMode {
+    #[default]
+    Region,
+    FullScreen,
+    Freeform,
+}
+
+impl CaptureMode {
+    pub const ALL: [CaptureMode; 3] =
+        [CaptureMode::Region, CaptureMode::FullScreen, CaptureMode::Freeform];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            CaptureMode::Region => "Bölge",
+            CaptureMode::FullScreen => "Tam ekran",
+            CaptureMode::Freeform => "Serbest",
         }
     }
 }
@@ -132,6 +157,8 @@ pub struct ScreenForgeApp {
     // Capture
     pub captured: Option<ImageBuf>,
     pub recents: Vec<RecentItem>,
+    /// Capture mode selector (the old overlay's mode bar).
+    pub capture_mode: CaptureMode,
 
     // Annotate
     pub annotate: Options,
@@ -170,6 +197,7 @@ impl ScreenForgeApp {
             status: "hazır".to_string(),
             captured: None,
             recents: Vec::new(),
+            capture_mode: CaptureMode::default(),
             annotate: Options::default(),
             tool: sf_draw::model::Tool::Rect,
             color: sf_draw::Rgba::rgb(0xEA6F12),
@@ -238,22 +266,37 @@ impl ScreenForgeApp {
                 ui.add_space(6.0);
                 for tab in Tab::ALL {
                     let selected = self.tab == tab;
-                    let text = format!("{}  {}", tab.icon(), tab.title());
-                    let build = move || {
-                        egui::Button::new(
-                            egui::RichText::new(text)
-                                .size(15.0)
-                                .color(if selected { egui::Color32::WHITE } else { theme::TEXT }),
-                        )
-                        .min_size(egui::vec2(150.0, 38.0))
-                    };
-                    // Accent fill for the active tab, surface for the rest; both
-                    // keep their hover/pressed ramp (see `theme::stateful_button`).
-                    let response = if selected {
-                        theme::accent_button(ui, build)
+                    let title = tab.title();
+                    let icon_name = tab.icon_name();
+                    let fg = if selected { egui::Color32::WHITE } else { theme::TEXT };
+                    // Reserve the row, then paint an icon + label inside it so the
+                    // line icon (not a letter) leads each tab, as in the old app.
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 38.0),
+                        egui::Sense::click(),
+                    );
+                    let fill = if selected {
+                        theme::ACCENT
+                    } else if response.hovered() {
+                        theme::SURFACE_HOVER
                     } else {
-                        theme::stateful_button(ui, theme::SURFACE, theme::SURFACE_HOVER, theme::SURFACE_HOVER, build)
+                        theme::SURFACE
                     };
+                    ui.painter().rect_filled(rect, 6.0, fill);
+
+                    let icon_rect = egui::Rect::from_min_size(
+                        egui::pos2(rect.left() + 12.0, rect.center().y - 9.0),
+                        egui::vec2(18.0, 18.0),
+                    );
+                    crate::icons::paint(ui.painter(), icon_name, icon_rect, fg, 1.8);
+                    ui.painter().text(
+                        egui::pos2(icon_rect.right() + 10.0, rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        title,
+                        egui::FontId::proportional(15.0),
+                        fg,
+                    );
+
                     if response.clicked() {
                         self.tab = tab;
                     }

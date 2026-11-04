@@ -10,12 +10,14 @@ use crate::shapes::{self, Stroke};
 /// The annotation tools. Mirrors the C# `EditorTool` subset the rasterizer covers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Tool {
+    Select,
     #[default]
     Rect,
     Ellipse,
     Arrow,
     Line,
     Pen,
+    Highlight,
     Step,
     Blur,
     Text,
@@ -25,25 +27,29 @@ impl Tool {
     /// Cycles to the next tool when the user presses Tab.
     pub fn next(self) -> Tool {
         match self {
+            Tool::Select => Tool::Rect,
             Tool::Rect => Tool::Ellipse,
             Tool::Ellipse => Tool::Arrow,
             Tool::Arrow => Tool::Line,
             Tool::Line => Tool::Pen,
-            Tool::Pen => Tool::Step,
+            Tool::Pen => Tool::Highlight,
+            Tool::Highlight => Tool::Step,
             Tool::Step => Tool::Blur,
             Tool::Blur => Tool::Text,
-            Tool::Text => Tool::Rect,
+            Tool::Text => Tool::Select,
         }
     }
 
     /// A short label for the overlay's tool hint.
     pub fn name(self) -> &'static str {
         match self {
+            Tool::Select => "Select",
             Tool::Rect => "Rect",
             Tool::Ellipse => "Ellipse",
             Tool::Arrow => "Arrow",
             Tool::Line => "Line",
             Tool::Pen => "Pen",
+            Tool::Highlight => "Highlight",
             Tool::Step => "Step",
             Tool::Blur => "Blur",
             Tool::Text => "Text",
@@ -85,6 +91,12 @@ pub enum Shape {
     Pen {
         points: Vec<(f32, f32)>,
         color: Rgba,
+    },
+    /// A thick translucent marker stroke.
+    Highlight {
+        points: Vec<(f32, f32)>,
+        color: Rgba,
+        width: f32,
     },
     Step {
         cx: f32,
@@ -129,7 +141,7 @@ impl Shape {
                 *x1 += dx;
                 *y1 += dy;
             }
-            Shape::Pen { points, .. } => {
+            Shape::Pen { points, .. } | Shape::Highlight { points, .. } => {
                 for p in points.iter_mut() {
                     p.0 += dx;
                     p.1 += dy;
@@ -168,6 +180,9 @@ pub fn render(canvas: &mut Canvas, shape: &Shape) {
         }
         Shape::Pen { points, color } => {
             shapes::draw_stroke_path(canvas, points, Stroke::new(*color, LINE_WIDTH));
+        }
+        Shape::Highlight { points, color, width } => {
+            crate::highlight::draw_highlight(canvas, points, *color, *width);
         }
         Shape::Step {
             cx,

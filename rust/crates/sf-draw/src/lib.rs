@@ -10,6 +10,8 @@
 
 pub mod blur;
 pub mod canvas;
+pub mod crop;
+pub mod highlight;
 pub mod model;
 pub mod presenter;
 pub mod shapes;
@@ -17,6 +19,8 @@ pub mod text;
 
 pub use blur::{apply_mask, MaskKind};
 pub use canvas::{Canvas, Rgba};
+pub use crop::{clamp_rect, crop_bgra};
+pub use highlight::draw_highlight;
 pub use model::{render, render_all, Shape, Tool, LINE_WIDTH};
 pub use text::{draw_text, measure};
 pub use shapes::{draw_arrow, draw_ellipse, draw_rect, draw_step, draw_stroke, Stroke};

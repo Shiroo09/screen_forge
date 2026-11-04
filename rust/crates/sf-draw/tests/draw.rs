@@ -167,16 +167,16 @@ fn tool_cycles_through_all_tools() {
     use sf_draw::model::Tool;
     let mut t = Tool::Rect;
     let mut seen = vec![t];
-    for _ in 0..8 {
+    for _ in 0..10 {
         t = t.next();
         seen.push(t);
     }
-    assert_eq!(t, Tool::Rect, "must return to start after 8 steps");
-    // All seven tools appear exactly once.
+    assert_eq!(t, Tool::Rect, "must return to start after 10 steps");
+    // All ten tools appear exactly once.
     let mut names: Vec<_> = seen.iter().map(|t| t.name()).collect();
     names.sort_unstable();
     names.dedup();
-    assert_eq!(names.len(), 8);
+    assert_eq!(names.len(), 10);
 }
 
 #[test]
@@ -375,3 +375,73 @@ fn text_tool_and_shape_translate() {
     assert_eq!(s.translate(-5.0, -5.0).translate(5.0, 5.0), s);
 }
 
+
+#[test]
+fn highlight_is_thick_and_translucent() {
+    use sf_draw::model::{render, Shape};
+    let yellow = Rgba::new(255, 220, 0, 255);
+    let mut px = surface(32, 32);
+    {
+        let mut c = Canvas::new(&mut px, 32, 32);
+        render(
+            &mut c,
+            &Shape::Highlight {
+                points: vec![(4.0, 16.0), (28.0, 16.0)],
+                color: yellow,
+                width: 10.0,
+            },
+        );
+    }
+    let mid = sf_draw::canvas::Canvas::new(&mut px.clone(), 32, 32).get(16, 16).unwrap();
+    // Tinted toward the marker, but the grey backdrop still shows through.
+    assert!(mid.r > 128 && mid.r < 255, "highlight should blend, got {mid:?}");
+    assert!(mid.g > 128, "green should also lift from the yellow ink, got {mid:?}");
+    // A pixel on the stroke but outside the row band is untouched.
+    let c = sf_draw::canvas::Canvas::new(&mut px, 32, 32);
+    assert_eq!(c.get(16, 8).unwrap(), Rgba::new(128, 128, 128, 255));
+}
+
+#[test]
+fn highlight_translates_like_pen() {
+    use sf_draw::model::Shape;
+    let s = Shape::Highlight {
+        points: vec![(1.0, 2.0), (3.0, 4.0)],
+        color: Rgba::new(255, 220, 0, 255),
+        width: 8.0,
+    };
+    assert_eq!(s.translate(5.0, -5.0).translate(-5.0, 5.0), s);
+}
+
+#[test]
+fn crop_bgra_takes_the_requested_window() {
+    use sf_draw::crop::{clamp_rect, crop_bgra};
+    // 8x8 BGRA, byte value = pixel index so every pixel is distinguishable.
+    let w = 8i32;
+    let h = 8i32;
+    let mut src = vec![0u8; (w * h * 4) as usize];
+    for i in 0..(w * h) as usize {
+        for b in 0..4 {
+            src[i * 4 + b] = i as u8;
+        }
+    }
+    let (out, ow, oh) = crop_bgra(&src, w, h, (2, 2, 4, 4));
+    assert_eq!((ow, oh), (4, 4));
+    assert_eq!(out.len(), 64);
+    // Top-left of the crop is source pixel (2,2), i.e. index 2*8+2 = 18.
+    assert_eq!(out[0], 18);
+    // Last row first column is (2,5) -> index 5*8+2 = 42.
+    assert_eq!(out[48], 42);
+    // Rect is clamped to the image bounds.
+    assert_eq!(clamp_rect((6, 6, 10, 10), 8, 8), (6, 6, 2, 2));
+}
+
+#[test]
+fn tool_cycle_includes_select_and_highlight() {
+    use sf_draw::model::Tool;
+    assert_eq!(Tool::Pen.next(), Tool::Highlight);
+    assert_eq!(Tool::Highlight.next(), Tool::Step);
+    assert_eq!(Tool::Text.next(), Tool::Select);
+    assert_eq!(Tool::Select.next(), Tool::Rect);
+    assert_eq!(Tool::Select.name(), "Select");
+    assert_eq!(Tool::Highlight.name(), "Highlight");
+}

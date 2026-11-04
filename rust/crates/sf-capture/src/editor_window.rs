@@ -316,6 +316,15 @@ mod imp {
                     strength: 8.0,
                 });
             }
+            Tool::Highlight => {
+                s.shapes.push(Shape::Highlight {
+                    points: vec![(sx, sy), (x, y)],
+                    color: s.color,
+                    width: 14.0,
+                });
+            }
+            // Select has no shape of its own (it would move existing items).
+            Tool::Select => {}
         }
     }
 

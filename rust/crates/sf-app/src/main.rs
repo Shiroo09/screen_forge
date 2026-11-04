@@ -1,5 +1,6 @@
 //! ScreenForge desktop app — Rust + egui.
 mod app;
+mod icons;
 mod panels;
 mod theme;
 

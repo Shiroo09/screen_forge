@@ -13,12 +13,14 @@ use sf_draw::model::{Shape, Tool};
 use sf_draw::Rgba;
 
 /// Everything the toolbar can do.
-const TOOLS: [Tool; 8] = [
+const TOOLS: [Tool; 10] = [
+    Tool::Select,
     Tool::Rect,
     Tool::Ellipse,
     Tool::Arrow,
     Tool::Line,
     Tool::Pen,
+    Tool::Highlight,
     Tool::Step,
     Tool::Blur,
     Tool::Text,
@@ -145,11 +147,13 @@ fn toolbar(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
 
 fn tool_label(tool: Tool) -> &'static str {
     match tool {
+        Tool::Select => "Seç",
         Tool::Rect => "Kutu",
         Tool::Ellipse => "Elips",
         Tool::Arrow => "Ok",
         Tool::Line => "Çizgi",
         Tool::Pen => "Kalem",
+        Tool::Highlight => "Fosforlu",
         Tool::Step => "Adım",
         Tool::Blur => "Bulanık",
         Tool::Text => "Metin",
@@ -378,6 +382,14 @@ fn paint_live(ui: &egui::Ui, origin: egui::Pos2, scale: f32, width: f32, shape: 
                 color32(*color),
             );
         }
+        Shape::Highlight { points, color, width: hw } => {
+            let pts: Vec<egui::Pos2> = points.iter().map(|(x, y)| to_screen(*x, *y)).collect();
+            if pts.len() >= 2 {
+                let mut c = color32(*color);
+                c = Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 110);
+                p.add(egui::Shape::line(pts, egui::Stroke::new((hw * scale).max(2.0), c)));
+            }
+        }
     }
 }
 
@@ -403,6 +415,13 @@ fn build_shape(app: &ScreenForgeApp, from: (f32, f32), to: (f32, f32), _w: f32) 
     let (rw, rh) = ((x1 - x0).abs(), (y1 - y0).abs());
 
     match app.tool {
+        Tool::Highlight => Shape::Highlight {
+            points: vec![from, to],
+            color: app.color,
+            width: 14.0,
+        },
+        // Select does not draw; fall back to a pen stroke so the drag is visible.
+        Tool::Select => Shape::Pen { points: vec![from, to], color: app.color },
         Tool::Rect => Shape::Rect { x: rx, y: ry, w: rw, h: rh, color: app.color },
         Tool::Ellipse => Shape::Ellipse { x: rx, y: ry, w: rw, h: rh, color: app.color },
         Tool::Arrow => Shape::Arrow { x0, y0, x1, y1, color: app.color },
