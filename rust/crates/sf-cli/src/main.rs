@@ -48,7 +48,7 @@ fn run(args: &[String]) -> Result<String, String> {
             let h: i32 = args.get(5).ok_or("crop: missing h")?.parse().map_err(|_| "bad h")?;
 
             let shot = sf_capture::capture_region(x, y, w, h)?;
-            write_png(out, shot.width, shot.height, &shot.bgra)?;
+            write_by_extension(out, shot.width, shot.height, &shot.bgra)?;
             Ok(format!("wrote {out} ({}x{})", shot.width, shot.height))
         }
         Some("gif") => {
@@ -77,7 +77,7 @@ fn run(args: &[String]) -> Result<String, String> {
             });
             let shot = sf_capture::capture_virtual_screen()?;
             sf_capture::copy_bgra_to_clipboard(shot.width, shot.height, &shot.bgra)?;
-            write_png(&out, shot.width, shot.height, &shot.bgra)?;
+            write_by_extension(&out, shot.width, shot.height, &shot.bgra)?;
             Ok(format!("copied to clipboard + wrote {out} ({}x{})", shot.width, shot.height))
         }
         Some("edit") => {
@@ -91,7 +91,7 @@ fn run(args: &[String]) -> Result<String, String> {
             let out = args.get(1).ok_or("annotate: missing output path")?;
             let mut shot = sf_capture::capture_virtual_screen()?;
             annotate_sample(&mut shot);
-            write_png(out, shot.width, shot.height, &shot.bgra)?;
+            write_by_extension(out, shot.width, shot.height, &shot.bgra)?;
             Ok(format!("wrote annotated {out} ({}x{})", shot.width, shot.height))
         }
         Some("mp4") => {
@@ -112,7 +112,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 .ok_or("selection cancelled or too small")?;
             let (x, y, w, h) = rect;
             let shot = sf_capture::capture_region(x, y, w, h)?;
-            write_png(out, shot.width, shot.height, &shot.bgra)?;
+            write_by_extension(out, shot.width, shot.height, &shot.bgra)?;
             Ok(format!("selected ({x},{y},{w},{h}) -> wrote {out}"))
         }
         Some("run") => {
@@ -162,23 +162,80 @@ fn run(args: &[String]) -> Result<String, String> {
     }
 }
 
+/// Chooses the output format from the file extension (default PNG).
+fn write_by_extension(path: &str, width: i32, height: i32, bgra: &[u8]) -> Result<(), String> {
+    let lower = path.to_lowercase();
+    let format = if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        sf_settings::ImageFormat::Jpeg
+    } else if lower.ends_with(".webp") {
+        sf_settings::ImageFormat::Webp
+    } else {
+        sf_settings::ImageFormat::Png
+    };
+    write_image(path, width, height, bgra, format, 92)
+}
+
 /// Encodes BGRA to PNG with the pure-Rust `png` crate (no GDI+ dependency).
 fn write_png(path: &str, width: i32, height: i32, bgra: &[u8]) -> Result<(), String> {
-    let file = std::fs::File::create(path).map_err(|e| format!("create {path}: {e}"))?;
-    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
+    write_image(path, width, height, bgra, sf_settings::ImageFormat::Png, 92)
+}
 
-    let mut writer = encoder.write_header().map_err(|e| format!("png header: {e}"))?;
+/// Encodes BGRA to the requested format. `quality` (1-100) applies to JPEG/WebP.
+fn write_image(
+    path: &str,
+    width: i32,
+    height: i32,
+    bgra: &[u8],
+    format: sf_settings::ImageFormat,
+    quality: i32,
+) -> Result<(), String> {
+    if width <= 0 || height <= 0 || bgra.len() < (width * height * 4) as usize {
+        return Err("invalid image buffer".to_string());
+    }
 
-    // The pipeline is BGRA; PNG wants RGBA. Swap the R and B bytes.
-    let mut rgba = Vec::with_capacity(bgra.len());
+    // The pipeline is BGRA; encoders want RGBA. Swap R and B once.
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
     for px in bgra.chunks_exact(4) {
         rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
     }
 
-    writer.write_image_data(&rgba).map_err(|e| format!("png data: {e}"))?;
-    Ok(())
+    match format {
+        sf_settings::ImageFormat::Png => {
+            let file = std::fs::File::create(path).map_err(|e| format!("create {path}: {e}"))?;
+            let mut encoder =
+                png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().map_err(|e| format!("png header: {e}"))?;
+            writer.write_image_data(&rgba).map_err(|e| format!("png data: {e}"))?;
+            Ok(())
+        }
+        sf_settings::ImageFormat::Jpeg | sf_settings::ImageFormat::Webp => {
+            let img: image::RgbaImage =
+                image::ImageBuffer::from_raw(width as u32, height as u32, rgba)
+                    .ok_or("image buffer size mismatch")?;
+            let q = quality.clamp(1, 100) as u8;
+            let fmt = if format == sf_settings::ImageFormat::Jpeg {
+                image::ImageFormat::Jpeg
+            } else {
+                image::ImageFormat::WebP
+            };
+            // JPEG has no alpha; the capture is opaque so a straight encode is fine.
+            let mut out = std::fs::File::create(path).map_err(|e| format!("create {path}: {e}"))?;
+            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, q);
+            if fmt == image::ImageFormat::Jpeg {
+                let rgb: image::RgbImage =
+                    image::DynamicImage::ImageRgba8(img).to_rgb8();
+                encoder
+                    .encode_image(&rgb)
+                    .map_err(|e| format!("jpeg encode: {e}"))?;
+            } else {
+                img.save_with_format(path, image::ImageFormat::WebP)
+                    .map_err(|e| format!("webp encode: {e}"))?;
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Captures `frames` screenshots spaced by `delay_ms` and encodes them as a GIF.
@@ -363,7 +420,7 @@ fn run_tray(
                 if let Err(e) = sf_capture::copy_bgra_to_clipboard(shot.width, shot.height, &shot.bgra) {
                     eprintln!("hotkey {n}: clipboard failed: {e}");
                 }
-                match write_png(path.to_str().unwrap_or("out.png"), shot.width, shot.height, &shot.bgra) {
+                match write_image(path.to_str().unwrap_or("out.png"), shot.width, shot.height, &shot.bgra, format, quality) {
                     // Log, don't pop a modal: the callback runs on the hotkey
                     // thread and a blocking dialog would stall further hotkeys.
                     Ok(()) => eprintln!("hotkey {n}: saved {} ({}x{})", path.display(), shot.width, shot.height),
@@ -383,7 +440,7 @@ fn run_tray(
             if let Some((x, y, w, h)) = sf_capture::overlay_window::pick_region() {
                 if let Ok(shot) = sf_capture::capture_region(x, y, w, h) {
                     let path = dir.join(format!("ScreenForge-tray-{n}.{ext}"));
-                    let _ = write_png(path.to_str().unwrap_or("out.png"), shot.width, shot.height, &shot.bgra);
+                    let _ = write_image(path.to_str().unwrap_or("out.png"), shot.width, shot.height, &shot.bgra, format, quality);
                     eprintln!("tray {n}: saved {}", path.display());
                 }
             }
@@ -465,7 +522,7 @@ fn edit_flow(out: &str) -> Result<String, String> {
         }
     }
 
-    write_png(out, shot.width, shot.height, &shot.bgra)?;
+    write_by_extension(out, shot.width, shot.height, &shot.bgra)?;
     Ok(format!(
         "edited ({x},{y},{w},{h}) with {} shape(s) -> wrote {out}",
         result.shapes.len()

@@ -56,7 +56,7 @@ GIF encoder, no C# involved:
 
 ```
 cargo run -p sf-cli -- png out.png                 # capture the screen
-cargo run -p sf-cli -- crop out.png 100 100 400 300 # a region
+cargo run -p sf-cli -- crop out.jpg 100 100 400 300 # a region (png/jpg/webp by extension)
 cargo run -p sf-cli -- gif out.gif 10 100           # N consecutive captures
 cargo run -p sf-cli -- record out.gif 5 10          # 5 s of real-time recording
 cargo run -p sf-cli -- settings                     # load %APPDATA% settings

@@ -20,6 +20,7 @@ sf-settings = { path = "../sf-settings" }
 sf-media = { path = "../sf-media" }
 
 png = "0.17"
+image = { version = "0.25", default-features = false, features = ["jpeg", "webp", "png"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
