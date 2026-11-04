@@ -177,7 +177,13 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings
                     .save(&sf_settings::settings_path())
                     .map_err(|e| format!("ayarlar kaydedilemedi: {e}"))?;
-                Ok(format!("ayarlar kaydedildi: {}", sf_settings::settings_path().display()))
+                // Apply the startup preference to the registry.
+                let _ = sf_settings::set_startup_enabled(settings.launch_at_startup);
+                Ok(format!(
+                    "ayarlar kaydedildi: {} (başlangıç={})",
+                    sf_settings::settings_path().display(),
+                    settings.launch_at_startup
+                ))
             } else {
                 Ok("ayarlar değiştirilmedi (iptal)".to_string())
             }
