@@ -8,6 +8,7 @@ pub mod lens;
 pub mod proto;
 pub mod reverse_http;
 pub mod reverse_search;
+pub mod translate;
 pub mod upload;
 
 pub use proto::ProtoWriter;

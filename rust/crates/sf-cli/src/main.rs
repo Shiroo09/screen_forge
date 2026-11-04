@@ -115,6 +115,18 @@ fn run(args: &[String]) -> Result<String, String> {
             write_by_extension(out, shot.width, shot.height, &shot.bgra)?;
             Ok(format!("selected ({x},{y},{w},{h}) -> wrote {out}"))
         }
+        Some("translate") => {
+            // translate <text...> [--to tr] — translate text (default: settings native).
+            let joined = args[1..].join(" ");
+            let (settings, _) = sf_settings::AppSettings::load(&sf_settings::settings_path());
+            let target = if settings.translate_native_language.trim().is_empty() {
+                "tr".to_string()
+            } else {
+                settings.translate_native_language.clone()
+            };
+            let result = sf_net::translate::translate(&joined, &target)?;
+            Ok(format!("[{}] {}", target, result.text))
+        }
         Some("reverse") => {
             // reverse <image> [yandex|lens] — print a reverse-search URL.
             let path = args.get(1).ok_or("reverse: missing image path")?;
@@ -169,7 +181,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|annotate|reverse|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|annotate|reverse|translate|run|settings> ...".to_string()),
     }
 }
 
