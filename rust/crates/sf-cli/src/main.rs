@@ -138,6 +138,18 @@ fn run(args: &[String]) -> Result<String, String> {
             let url = sf_net::reverse_http::search_url(&bytes, engine)?;
             Ok(format!("reverse search URL: {url}"))
         }
+        Some("gui") => {
+            // gui — open the settings window, then save if accepted.
+            let (mut settings, _) = sf_settings::AppSettings::load(&sf_settings::settings_path());
+            if sf_capture::settings_window::show(&mut settings) {
+                settings
+                    .save(&sf_settings::settings_path())
+                    .map_err(|e| format!("ayarlar kaydedilemedi: {e}"))?;
+                Ok(format!("ayarlar kaydedildi: {}", sf_settings::settings_path().display()))
+            } else {
+                Ok("ayarlar değiştirilmedi (iptal)".to_string())
+            }
+        }
         Some("run") => {
             // run [seconds] — register the capture hotkey (Alt+Shift+S), stay in
             // the tray, and save a PNG each time it fires. Proves the interactive
@@ -181,7 +193,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|annotate|reverse|translate|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|annotate|reverse|translate|gui|run|settings> ...".to_string()),
     }
 }
 

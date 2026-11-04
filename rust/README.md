@@ -62,6 +62,7 @@ cargo run -p sf-cli -- record out.gif 5 10          # 5 s of real-time recording
 cargo run -p sf-cli -- settings                     # load %APPDATA% settings
 cargo run -p sf-cli -- reverse out.png lens          # reverse-image-search URL
 cargo run -p sf-cli -- translate "Good morning"       # translate (settings target)
+cargo run -p sf-cli -- gui                           # settings window (Win32 controls)
 cargo run -p sf-cli -- run                           # tray + hotkey, driven by %APPDATA% settings
 ```
 
