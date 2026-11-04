@@ -451,7 +451,13 @@ fn record_gif(path: &str, seconds: f64, fps: i32) -> Result<RecordStats, String>
     // Capture phase: compress each frame as it arrives. Memory stays bounded to
     // the compressed size, not frames × 29 MB raw.
     let mut store = sf_gif::frame_store::FrameStore::new((w * h * 4) as usize);
-    let mut samples: Vec<Vec<u8>> = Vec::new();
+    // Palette samples are gathered by pixel stride into a small fixed buffer.
+    // Holding whole frames here would pin ~350 MB at 4K (12 × 29 MB); the global
+    // palette only needs a spread of colors, not full frames.
+    let mut palette_samples: Vec<u8> = Vec::new();
+    const MAX_SAMPLE_BYTES: usize = 6 * 1024 * 1024;
+    let frame_bytes = (w * h * 4) as usize;
+    let sample_stride = (frame_bytes / MAX_SAMPLE_BYTES).max(1);
     let mut first = Some(first);
 
     for i in 0..total_frames {
@@ -469,9 +475,13 @@ fn record_gif(path: &str, seconds: f64, fps: i32) -> Result<RecordStats, String>
         if is_same {
             dropped += 1;
         } else {
-            // Keep a few raw frames as palette samples (thinned, capped in the encoder).
-            if samples.len() < 12 {
-                samples.push(shot.bgra.clone());
+            // Thin this frame into the palette sample buffer.
+            if palette_samples.len() < MAX_SAMPLE_BYTES {
+                let mut p = 0;
+                while p + 3 < frame_bytes && palette_samples.len() + 3 < MAX_SAMPLE_BYTES {
+                    palette_samples.extend_from_slice(&shot.bgra[p..p + 4]);
+                    p += 4 * sample_stride;
+                }
             }
             store.add(&shot.bgra);
             last_kept = Some(shot.bgra);
@@ -496,7 +506,7 @@ fn record_gif(path: &str, seconds: f64, fps: i32) -> Result<RecordStats, String>
     gif.maximum_number_color = 256;
     gif.use_global_palette = true;
     gif.quantizer_type = sf_gif::QuantizerType::Octree; // fast; Neural is available for quality
-    gif.build_global_palette(&samples);
+    gif.build_global_palette(&[palette_samples]);
 
     let packed = store.drain_packed();
     for block in packed {
