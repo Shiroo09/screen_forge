@@ -21,6 +21,7 @@ sf-media = { path = "../sf-media" }
 sf-net = { path = "../sf-net" }
 
 png = "0.17"
+gif = "0.13"
 image = { version = "0.25", default-features = false, features = ["jpeg", "webp", "png"] }
 
 [target.'cfg(windows)'.dependencies]

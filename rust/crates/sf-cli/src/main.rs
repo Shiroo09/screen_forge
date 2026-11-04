@@ -6,6 +6,8 @@
 //!   screenforge gif <out.gif> <frames> <delay_ms>   # an animated GIF
 //!   screenforge crop <out.png> <x> <y> <w> <h>      # a screen region
 
+mod gifedit;
+
 use std::process::ExitCode;
 
 use sf_gif::gif_file::{GifFile, Rect};
@@ -22,6 +24,12 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Reads `--name value` from the argument list.
+fn flag_value(args: &[String], name: &str) -> Option<i32> {
+    let idx = args.iter().position(|a| a == name)?;
+    args.get(idx + 1).and_then(|v| v.parse().ok())
 }
 
 fn parse_u32(s: &str) -> Option<u32> {
@@ -138,6 +146,30 @@ fn run(args: &[String]) -> Result<String, String> {
             let url = sf_net::reverse_http::search_url(&bytes, engine)?;
             Ok(format!("reverse search URL: {url}"))
         }
+        Some("gifedit") => {
+            // gifedit <in.gif> <out.gif> [--keep N] [--remove N] [--reverse]
+            let input = args.get(1).ok_or("gifedit: missing input gif")?;
+            let output = args.get(2).ok_or("gifedit: missing output gif")?;
+            let keep = flag_value(args, "--keep").unwrap_or(2).max(1) as usize;
+            let remove = flag_value(args, "--remove").unwrap_or(1).max(1) as usize;
+            let reverse = args.iter().any(|a| a == "--reverse");
+
+            let decoded = gifedit::decode(input)?;
+            let before = decoded.frames.len();
+            let after = gifedit::encode(
+                output,
+                decoded.width,
+                decoded.height,
+                &decoded.frames,
+                keep,
+                remove,
+                reverse,
+            )?;
+            Ok(format!(
+                "gifedit: {before} -> {after} frames, wrote {output} ({}x{})",
+                decoded.width, decoded.height
+            ))
+        }
         Some("gui") => {
             // gui — open the settings window, then save if accepted.
             let (mut settings, _) = sf_settings::AppSettings::load(&sf_settings::settings_path());
@@ -193,7 +225,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 settings.region_hotkey.display(),
             ))
         }
-        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|annotate|reverse|translate|gui|run|settings> ...".to_string()),
+        _ => Err("usage: screenforge <png|gif|crop|record|mp4|shot|select|edit|gifedit|annotate|reverse|translate|gui|run|settings> ...".to_string()),
     }
 }
 
