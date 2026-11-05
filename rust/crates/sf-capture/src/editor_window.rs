@@ -105,7 +105,7 @@ mod imp {
     use super::{EditResult, SelectionRect};
     use super::PlacedShape;
     use crate::overlay_chrome::{self, Action, Clickable, Hit, ModeChoice};
-    use crate::selection::SelectionState;
+    use crate::selection::{DragCfg, SelectDrag, SelectionState};
     use sf_draw::canvas::Canvas;
     use sf_draw::model::{self, Shape, Tool};
     use sf_draw::canvas::Rgba;
@@ -169,6 +169,8 @@ mod imp {
         text_buf: String,
         /// Pointer aracıyla sürüklenen şeklin indeksi ve kavrama noktası.
         moving: Option<(usize, f32, f32)>,
+        /// Bitmiş seçimin tutamaçtan boyutlandırılması/taşınması.
+        select_drag: Option<SelectDrag>,
         drag_start: (f32, f32),
         pen_points: Vec<(f32, f32)>,
         step_count: u32,
@@ -221,6 +223,7 @@ mod imp {
                 redo: Vec::new(),
                 text_buf: String::new(),
                 moving: None,
+                select_drag: None,
                 drag_start: (0.0, 0.0),
                 pen_points: Vec::new(),
                 step_count: 0,
@@ -331,7 +334,18 @@ mod imp {
             WM_MOUSEMOVE => {
                 let (x, y) = (lo(lparam), hi(lparam));
                 match s.phase {
-                    Phase::Selecting => s.selection.update(x, y),
+                    // Tutamaç sürüklemesi canlı: bölge her harekette güncellenir,
+                    // böylece yeniden boyutlandırma sırasında çerçeve görünür.
+                    Phase::Selecting => {
+                        if let Some(d) = &s.select_drag {
+                            let r = d.rect((x, y));
+                            s.region =
+                                Some((r.0 + s.origin.0, r.1 + s.origin.1, r.2, r.3));
+                            let _ = InvalidateRect(Some(hwnd), None, false);
+                        } else {
+                            s.selection.update(x, y)
+                        }
+                    }
                     Phase::Drawing => {
                         if s.tool == Tool::Pen && !s.pen_points.is_empty() {
                             // Şekiller sanal ekran koordinatında saklanır (kırpma
@@ -361,7 +375,24 @@ mod imp {
                     return LRESULT(0);
                 }
                 match s.phase {
-                    Phase::Selecting => s.selection.begin(x, y),
+                    // Bitmiş bir seçimin tutamacı ya da içi: yeni seçim
+                    // başlatmak yerine onu boyutlandır/taşı. Tutamaç yoksa
+                    // sıfırdan seçim başlar (C# `ResizeSelection`/`MoveSelection`).
+                    Phase::Selecting => match s.region.and_then(|r| {
+                        SelectDrag::begin(
+                            (r.0 - s.origin.0, r.1 - s.origin.1, r.2, r.3),
+                            (x, y),
+                            drag_cfg(s),
+                        )
+                    }) {
+                        Some(d) => s.select_drag = Some(d),
+                        // Tutamaç yok: baştan seçim. Eski bölge temizlenir,
+                        // yoksa sürükleme boyunca eski tutamaçlar ekranda kalır.
+                        None => {
+                            s.region = None;
+                            s.selection.begin(x, y);
+                        }
+                    },
                     Phase::Drawing => {
                         let (vx, vy) = virt(s, x, y);
                         s.drag_start = (vx, vy);
@@ -396,6 +427,20 @@ mod imp {
                 }
                 match s.phase {
                     Phase::Selecting => {
+                        // Tutamaç sürüklemesi bitti: bölgeyi güncelle.
+                        if let Some(d) = s.select_drag.take() {
+                            let r = d.rect((x, y));
+                            if r.2 >= MIN_SIZE && r.3 >= MIN_SIZE {
+                                s.region = Some((
+                                    r.0 + s.origin.0,
+                                    r.1 + s.origin.1,
+                                    r.2,
+                                    r.3,
+                                ));
+                            }
+                            let _ = InvalidateRect(Some(hwnd), None, false);
+                            return LRESULT(0);
+                        }
                         if let Some(rect) = s.selection.finish(MIN_SIZE) {
                             s.region = Some((
                                 rect.0 + s.origin.0,
@@ -473,9 +518,18 @@ mod imp {
                             let _ = InvalidateRect(Some(hwnd), None, false);
                         }
                     }
-                    // Enter finishes the edit once drawing has begun.
+                    // Enter bitirir. Seçim aşamasında tutamaçla yeniden
+                    // boyutlandırma yapıldıysa da bitirilebilmeli; eskiden
+                    // yalnız Drawing'de çalışıyordu ve onay yolu yoktu.
                     VK_RETURN if s.phase == Phase::Drawing => {
                         let _ = DestroyWindow(hwnd);
+                    }
+                    VK_RETURN => {
+                        if let Some(r) = s.region {
+                            if r.2 >= MIN_SIZE && r.3 >= MIN_SIZE {
+                                let _ = DestroyWindow(hwnd);
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -493,6 +547,17 @@ mod imp {
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        }
+    }
+
+    /// Ölçekli tutamaç yakalama toleransı ve sınırlar. Ölçekle birlikte büyür:
+    /// yüksek DPI'da 6px fiziksel olarak çok dar kalırdı.
+    fn drag_cfg(s: &State) -> DragCfg {
+        let grab = (6.0 * s.scale).round() as i32;
+        DragCfg {
+            grab,
+            min: MIN_SIZE,
+            bounds: (0, 0, s.mon_w, s.shot.height),
         }
     }
 
@@ -802,6 +867,16 @@ mod imp {
             let white = CreateSolidBrush(windows::Win32::Foundation::COLORREF(0x00FFFFFF));
             let _ = FrameRect(hdc, &frame, white);
             let _ = DeleteObject(HGDIOBJ(white.0));
+        }
+
+        // Bitmiş seçim: kenar çerçevesi + boyutlandırma tutamaçları. Tutamaçlar
+        // görünmezse kullanıcı seçimi değiştirebileceğini bilmiyor.
+        if let Some(r) = s.region {
+            if s.phase == Phase::Selecting {
+                let d = drag_cfg(s);
+                let rect = (r.0 - s.origin.0, r.1 - s.origin.1, r.2, r.3);
+                overlay_chrome::draw_selection_handles(hdc, rect, d.grab, s.scale);
+            }
         }
 
         // Krom: seçim öncesi mod çubuğu + ipucu, seçim sonrası araç şeridi.

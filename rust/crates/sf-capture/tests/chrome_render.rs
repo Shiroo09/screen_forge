@@ -5,8 +5,8 @@
 #![cfg(windows)]
 
 use sf_capture::overlay_chrome::{
-    draw_action_bar, draw_mode_bar, draw_option_bar, draw_size_badge, draw_toast, draw_tool_strip,
-    Action, Hit, ModeChoice,
+    draw_action_bar, draw_mode_bar, draw_option_bar, draw_selection_handles, draw_size_badge,
+    draw_toast, draw_tool_strip, Action, Hit, ModeChoice,
 };
 use sf_draw::model::Tool;
 use windows::Win32::Graphics::Gdi::{
@@ -184,6 +184,44 @@ fn toast_paints_and_clamps_inside_the_client() {
     println!("surface={surface} rect={r:?}");
     assert!(surface > 300, "toast fill missing (surface={surface})");
     assert!(r.left >= 0 && r.right <= W, "toast left the client area: {r:?}");
+}
+
+#[test]
+fn selection_handles_paint_white_knobs_on_the_corners() {
+    // Magenta sentinel zemin: tutamaçlar beyaz olduğu için sayıları doğrudan
+    // ölçülür. Sekiz tutamaç × ~(2*grab)² piksel bekleniyor.
+    let px = render(|dc| {
+        draw_selection_handles(dc, (40, 20, 140, 50), 6, 1.0);
+    });
+    let white = count(&px, (0xF2, 0xF4, 0xF8));
+    println!("--- selection handles ---\n{}", map(&px));
+    println!("white={white}");
+    // 8 tutamaç, 12×12 kare, yuvarlatma köşeleri yer: ~1000 beklenir.
+    assert!(white > 500, "tutamaçlar çizilmedi (white={white})");
+    // Kenarlık accent olmalı: panel dolgusu gibi tüm dikdörtgen boyanmamalı.
+    let sentinel = count(&px, (255, 0, 255));
+    assert!(sentinel > 3000, "seçim içi doldurulmuş, yalnız çerçeve olmalı");
+
+    // Çerçeve dört kenarda da kapalı olmalı. ASCII haritası 2 piksel adımla
+    // örneklediği için tek indekse düşen sağ/alt kenarı göstermez; bu yüzden
+    // kenarlar burada tek tek sayılır.
+    let accent_at = |x: i32, y: i32| {
+        let i = ((y * W + x) * 4) as usize;
+        let (b, g, r) = (px[i], px[i + 1], px[i + 2]);
+        r > 180 && (80..150).contains(&g) && b < 60
+    };
+    // (40,20)-(180,70): son piksel dahil olmak üzere her kenarda kesintisiz şerit.
+    // rect_at(l,t,w,h) → (l, t, l+w-1, t+h-1). Tutamaçlar 12×12 olduğu için
+    // kenarın yalnız tutamaçların ARASINDA kalan parçaları sayılır; tutamaç
+    // üstünde beyaz beklenir, accent değil.
+    for x in [60, 80, 130, 160] {
+        assert!(accent_at(x, 20), "üst kenar kopuk: x={x}");
+        assert!(accent_at(x, 69), "alt kenar kopuk: x={x}");
+    }
+    for y in [32, 34] {
+        assert!(accent_at(40, y), "sol kenar kopuk: y={y}");
+        assert!(accent_at(179, y), "sağ kenar kopuk: y={y}");
+    }
 }
 
 #[test]

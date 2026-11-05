@@ -12,6 +12,10 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
                 &mut app.settings.auto_copy_link_after_upload,
                 "Yükleme sonrası bağlantıyı kopyala",
             );
+            ui.checkbox(
+                &mut app.settings.auto_close_upload_window,
+                "Yükleme penceresini otomatik kapat",
+            );
         });
 
         section(ui, "Çıktı", |ui| {
@@ -68,8 +72,29 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
                         }
                     });
 
+                ui.horizontal(|ui| {
+                    ui.label("Örnekleme faktörü");
+                    ui.add(egui::DragValue::new(&mut app.settings.gif.sampling_factor).range(1..=20));
+                });
+                // Recording duration lives on the Record panel: it is a
+                // per-capture choice, not a persisted preference (the C# settings
+                // file has no field for it).
+
                 ui.checkbox(&mut app.settings.gif.dithering, "Titreşim (dithering)");
                 ui.checkbox(&mut app.settings.gif.use_global_palette, "Genel palet kullan");
+                ui.checkbox(&mut app.settings.gif.optimize_unchanged_pixels, "Değişmeyen pikselleri atla");
+                ui.horizontal(|ui| {
+                    ui.label("Değişim toleransı");
+                    ui.add(egui::DragValue::new(&mut app.settings.gif.change_tolerance).range(0..=32));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Kare belleği üst sınırı (MB)");
+                    ui.add(egui::DragValue::new(&mut app.settings.gif.max_frame_memory_mb).range(32..=8192));
+                });
+                ui.checkbox(&mut app.settings.gif.capture_cursor, "İmleci kayda ekle");
+                ui.checkbox(&mut app.settings.gif.highlight_clicks, "Tıklamaları vurgula");
+                ui.checkbox(&mut app.settings.gif.highlight_cursor, "İmleç halkası göster");
+                ui.checkbox(&mut app.settings.gif.show_keys, "Tuş etiketlerini göster");
             });
         });
 
@@ -92,6 +117,12 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
                         );
                         ui.selectable_value(&mut app.settings.video.quality, VideoQuality::High, "Yüksek");
                     });
+
+                ui.checkbox(&mut app.settings.video.capture_cursor, "İmleci kayda ekle");
+                ui.checkbox(&mut app.settings.video.highlight_clicks, "Tıklamaları vurgula");
+                ui.checkbox(&mut app.settings.video.record_system_audio, "Sistem sesini kaydet");
+                ui.checkbox(&mut app.settings.video.record_microphone, "Mikrofonu kaydet");
+                ui.checkbox(&mut app.settings.video.show_countdown, "Geri sayım göster");
             });
         });
 

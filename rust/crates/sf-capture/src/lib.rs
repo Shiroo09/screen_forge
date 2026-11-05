@@ -24,5 +24,8 @@ pub mod reserved_hotkeys;
 
 pub use clipboard::{copy_bgra_to_clipboard, copy_text_to_clipboard};
 pub use keys::MouseButtons;
-pub use screen::{capture_region, capture_virtual_screen, virtual_screen_bounds, Captured};
+pub use screen::{
+    capture_region, capture_region_with_cursor, capture_virtual_screen, virtual_screen_bounds,
+    Captured,
+};
 pub use overlay::{InputOverlayOptions, Rgba};

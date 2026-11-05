@@ -184,13 +184,17 @@ pub struct ScreenForgeApp {
     pub recording: bool,
     pub record_gif: bool,
     pub record_seconds: f32,
-    pub record_fps: i32,
+    /// Selected capture region `(x, y, w, h)` in virtual-screen coords;
+    /// `None` = whole screen.
+    pub record_region: Option<(i32, i32, i32, i32)>,
 
     // GIF editor
     pub gif_info: Option<(i32, i32, usize)>,
     pub gif_keep: i32,
     pub gif_remove: i32,
     pub gif_reverse: bool,
+    /// "Yinelenenleri kaldır" benzerlik eşiği (0-100).
+    pub gif_similarity: f32,
 
     // Translate
     pub translate_input: String,
@@ -227,11 +231,12 @@ impl ScreenForgeApp {
             recording: false,
             record_gif: true,
             record_seconds: 5.0,
-            record_fps: 12,
+            record_region: None,
             gif_info: None,
             gif_keep: 2,
             gif_remove: 1,
             gif_reverse: false,
+            gif_similarity: 10.0,
             translate_input: String::new(),
             translate_output: String::new(),
         }
@@ -245,6 +250,9 @@ impl ScreenForgeApp {
 
 impl eframe::App for ScreenForgeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // A recording runs on its own thread; drain its result even when the
+        // Record tab is not the one on screen.
+        crate::panels::record::sync(self);
         self.topbar(ui);
         self.sidebar(ui);
         egui::CentralPanel::default().show(ui, |ui| match self.tab {
@@ -256,6 +264,11 @@ impl eframe::App for ScreenForgeApp {
             Tab::Collage => crate::panels::collage::ui(self, ui),
             Tab::Settings => crate::panels::settings::ui(self, ui),
         });
+        // The status bar (elapsed / fps / memory + pause, restart, stop) is its
+        // own always-on-top viewport, kept alive on every tab.
+        if let Some(spec) = crate::panels::record::overlay_spec() {
+            crate::panels::record_overlay::ui(ui.ctx(), &spec);
+        }
         self.toast_ui(ui.ctx());
     }
 }

@@ -39,3 +39,54 @@ fn writes_a_valid_mp4() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+/// The AAC track is what `settings.video.record_system_audio` needs; without it
+/// the setting would be a label. Checks the stream is accepted and written.
+#[test]
+#[cfg(windows)]
+fn writes_an_mp4_with_an_aac_audio_track() {
+    let path = std::env::temp_dir().join("sf-record-audio-test.mp4");
+    let _ = std::fs::remove_file(&path);
+
+    let (w, h, fps, rate) = (320, 240, 15, 48000);
+    let mut writer =
+        sf_record::Mp4Writer::with_audio(path.to_str().unwrap(), w, h, fps, 2_000_000, Some(rate))
+            .expect("create MP4 writer");
+    assert!(writer.has_audio(), "AAC stream not accepted");
+    assert_eq!(writer.audio_sample_rate(), 48000);
+
+    let frame_dur = writer.frame_duration();
+    let stride = (w * h * 4) as usize;
+
+    // 1 s of video, and one 1024-sample AAC frame per video frame at 15 fps
+    // (1024 * 15 ≈ 15 kHz, deliberately sparse — just enough to be non-empty).
+    let quantum = 1024usize;
+    for i in 0..15i64 {
+        let bgra = vec![0x80u8; stride];
+        writer.write_bgra(&bgra, i * frame_dur).expect("write frame");
+
+        let mut pcm = Vec::with_capacity(quantum * 4);
+        for s in 0..quantum {
+            let v = ((i * 1000 + s as i64) as f32 * 0.01).sin();
+            let sample = (v * 8000.0) as i16;
+            pcm.extend_from_slice(&sample.to_le_bytes()); // L
+            pcm.extend_from_slice(&sample.to_le_bytes()); // R
+        }
+        writer
+            .write_pcm16(&pcm, i * 1024 * 10_000_000 / rate as i64)
+            .expect("write audio");
+    }
+    writer.finish().expect("finalize");
+
+    let bytes = std::fs::read(&path).expect("mp4 exists");
+    assert!(bytes.len() > 1024, "mp4 too small: {} bytes", bytes.len());
+    assert_eq!(&bytes[4..8], b"ftyp", "missing ftyp box");
+    assert!(bytes.windows(4).any(|w| w == b"moov"), "missing moov box");
+    // An audio track shows up as a 'soun' handler; a video-only file has none.
+    assert!(
+        bytes.windows(4).any(|w| w == b"soun"),
+        "no audio track in the output"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}

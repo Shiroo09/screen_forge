@@ -14,6 +14,13 @@ fn slot() -> &'static Arc<Mutex<Option<Result<String, String>>>> {
     SLOT.get_or_init(|| Arc::new(Mutex::new(None)))
 }
 
+/// When the share box should disappear on its own, for
+/// `auto_close_upload_window`. `None` while the box should stay.
+fn hide_at() -> &'static Mutex<Option<std::time::Instant>> {
+    static HIDE: OnceLock<Mutex<Option<std::time::Instant>>> = OnceLock::new();
+    HIDE.get_or_init(|| Mutex::new(None))
+}
+
 /// Encodes a BGRA buffer to PNG bytes, swapping B/R to RGBA on the way.
 fn encode_png(width: i32, height: i32, bgra: &[u8]) -> Result<Vec<u8>, String> {
     if width <= 0 || height <= 0 || bgra.len() < (width * height * 4) as usize {
@@ -68,6 +75,21 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
     let Some(url) = app.upload_url.clone() else {
         return;
     };
+
+    // auto_close_upload_window: the share box hides 3 s after it appears, the
+    // same delay the C# toast used. Hiding keeps the app alive (tray mode).
+    if app.settings.auto_close_upload_window {
+        let mut guard = hide_at().lock().unwrap();
+        match *guard {
+            Some(at) if std::time::Instant::now() >= at => {
+                *guard = None;
+                app.upload_url = None;
+                return;
+            }
+            Some(_) => ui.ctx().request_repaint(),
+            None => *guard = Some(std::time::Instant::now() + std::time::Duration::from_secs(3)),
+        }
+    }
 
     ui.add_space(10.0);
     egui::Frame::new()

@@ -148,3 +148,19 @@ fn captures_a_region_and_crops_it() {
     assert_eq!(cropped.bgra[0], shot.bgra[src]);
     assert_eq!(cropped.bgra[1], shot.bgra[src + 1]);
 }
+
+#[test]
+#[cfg(windows)]
+fn cursor_capture_matches_the_plain_capture_size() {
+    // With the cursor on, the frame is the same shape: the icon is composited in
+    // and never changes the buffer geometry.
+    let plain = sf_capture::capture_region(0, 0, 320, 240).expect("plain capture");
+    let with_cursor = sf_capture::capture_region_with_cursor(0, 0, 320, 240).expect("capture");
+
+    assert_eq!(with_cursor.width, plain.width);
+    assert_eq!(with_cursor.height, plain.height);
+    assert_eq!(with_cursor.bgra.len(), plain.bgra.len());
+
+    // An obviously invalid rectangle is rejected the same way.
+    assert!(sf_capture::capture_region_with_cursor(0, 0, 0, 0).is_err());
+}

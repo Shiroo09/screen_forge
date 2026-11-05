@@ -1,25 +1,34 @@
-//! Record panel: capture the screen to GIF or MP4 from the desktop UI.
+//! Record panel: capture a chosen screen region to GIF or MP4.
 //!
-//! The capture loop runs on a worker thread so the frame never blocks. `app` has
-//! no channel field, so the worker reports back through the module-level
-//! `RESULT` slot, which `ui()` drains on every pass.
+//! The capture loop runs on a worker thread so the frame never blocks; the
+//! thread shares its pause/restart/stop state with the status overlay through a
+//! single [`sf_record::PauseHandle`]. The final message comes back through the
+//! module-level `RESULT` slot, which `ui()` drains on every pass.
 //!
-//! shortcut: the result is only drained while the Kayıt tab is on screen; a job
-//! that finishes on another tab stays "kaydediliyor" until the user returns.
+//! Region, fps and the encoder settings are read from `sf-settings`; only the
+//! per-run duration stays panel state.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use sf_record::PauseHandle;
+
 use crate::app::ScreenForgeApp;
+use crate::panels::record_worker::{record_gif, record_mp4, GifEncode, RecordingOptions, ScreenSource};
 use crate::theme;
 
-/// Set by the "İptal" button; polled once per captured frame.
-static CANCEL: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+/// The live recording, if any. Shared with the status overlay.
+static ACTIVE: OnceLock<Arc<Mutex<Option<Active>>>> = OnceLock::new();
 /// Final message from the worker, drained by `ui()`.
 static RESULT: OnceLock<Arc<Mutex<Option<String>>>> = OnceLock::new();
 
-fn cancel_flag() -> Arc<AtomicBool> {
-    CANCEL.get_or_init(|| Arc::new(AtomicBool::new(false))).clone()
+struct Active {
+    handle: PauseHandle,
+    region: (i32, i32, i32, i32),
+    gif: bool,
+}
+
+fn active_slot() -> Arc<Mutex<Option<Active>>> {
+    ACTIVE.get_or_init(|| Arc::new(Mutex::new(None))).clone()
 }
 
 fn result_slot() -> Arc<Mutex<Option<String>>> {
@@ -27,33 +36,35 @@ fn result_slot() -> Arc<Mutex<Option<String>>> {
 }
 
 pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
-    // The worker thread cannot touch `app`; it leaves its final message here.
-    if let Some(msg) = result_slot().lock().unwrap().take() {
-        app.recording = false;
-        app.status = "hazır".to_string();
-        app.notify(msg);
+    if app.recording {
+        // The worker cannot touch `app`; it leaves its final message here.
+        if let Some(msg) = result_slot().lock().unwrap().take() {
+            app.recording = false;
+            app.status = "hazır".to_string();
+            *active_slot().lock().unwrap() = None;
+            app.notify(msg);
+        }
     }
 
     ui.heading("Kayıt");
     ui.label(
-        egui::RichText::new("Ekranı GIF veya MP4 olarak kaydedin")
+        egui::RichText::new("Ekranın seçtiğiniz bölgesini GIF veya MP4 olarak kaydedin")
             .color(theme::TEXT_DIM),
     );
     ui.add_space(10.0);
 
     let recording = app.recording;
+    let gif = app.record_gif;
 
     if recording {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("●").color(theme::ACCENT).size(18.0));
-            ui.label(egui::RichText::new("kaydediliyor...").color(theme::ACCENT).strong());
-            if ui.button("İptal").clicked() {
-                cancel_flag().store(true, Ordering::SeqCst);
-                app.notify("kayıt iptal ediliyor...");
-            }
-        });
-        // Keep the frame ticking so the cancel button stays responsive.
-        ui.ctx().request_repaint();
+        // Clone the handle out of the lock before drawing, so the closure never
+        // holds the mutex across a borrow of `app`.
+        let handle = active_slot()
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|a| a.handle.clone());
+        recording_bar(app, ui, handle);
         ui.add_space(10.0);
     }
 
@@ -77,24 +88,32 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
+                    ui.label("Bölge");
+                    let label = match app.record_region {
+                        Some((_, _, w, h)) => format!("seçili — {w}×{h}"),
+                        None => "tüm ekran".to_string(),
+                    };
+                    ui.label(egui::RichText::new(label).color(theme::TEXT_DIM));
+                    if ui.button("Bölge seç").clicked() {
+                        app.record_region = sf_capture::overlay_window::pick_region();
+                    }
+                    if app.record_region.is_some() && ui.button("Temizle").clicked() {
+                        app.record_region = None;
+                    }
+                });
+
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
                     ui.label("Süre");
                     ui.add(
                         egui::DragValue::new(&mut app.record_seconds)
-                            .range(1.0..=120.0)
+                            .range(1.0..=600.0)
                             .speed(0.5)
                             .suffix(" sn"),
                     );
                 });
-                ui.horizontal(|ui| {
-                    ui.label("FPS");
-                    ui.add(
-                        egui::DragValue::new(&mut app.record_fps)
-                            .range(1..=30)
-                            .suffix(" fps"),
-                    );
-                });
 
-                ui.add_space(10.0);
+                ui.add_space(8.0);
                 save_clicked = ui
                     .add_sized(
                         [160.0, 34.0],
@@ -103,7 +122,27 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
                     .clicked();
             });
 
-        if !app.record_gif && !sf_record::is_supported() {
+        // Recording settings live on the Settings tab; surface the active ones
+        // here so it is obvious what a run will use.
+        ui.add_space(6.0);
+        let fps = if gif { app.settings.gif.fps } else { app.settings.video.fps };
+        ui.label(
+            egui::RichText::new(format!(
+                "{fps} fps · {}{}",
+                if gif { "GIF" } else { "MP4" },
+                if gif && !app.settings.gif.enabled {
+                    " · GIF kaydı ayarlarda kapalı"
+                } else if !gif && !app.settings.video.enabled {
+                    " · video kaydı ayarlarda kapalı"
+                } else {
+                    ""
+                }
+            ))
+            .color(theme::TEXT_DIM)
+            .size(12.0),
+        );
+
+        if !gif && !sf_record::is_supported() {
             ui.add_space(6.0);
             ui.label(
                 egui::RichText::new("MP4 kaydı bu platformda desteklenmiyor")
@@ -118,6 +157,56 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
     }
 }
 
+/// The "kaydediliyor" bar with pause/resume/restart/stop and the live counters.
+fn recording_bar(app: &mut ScreenForgeApp, ui: &mut egui::Ui, handle: Option<PauseHandle>) {
+    let paused = handle.as_ref().is_some_and(|h| h.is_paused());
+    ui.horizontal(|ui| {
+        let (glyph, label, color) = if paused {
+            ("||", "duraklatıldı", theme::TEXT_DIM)
+        } else {
+            ("●", "kaydediliyor...", theme::ACCENT)
+        };
+        ui.label(egui::RichText::new(glyph).color(color).size(18.0));
+        ui.label(egui::RichText::new(label).color(color).strong());
+
+        let Some(handle) = handle else {
+            return;
+        };
+
+        if ui.button(if paused { "Devam et" } else { "Duraklat" }).clicked() {
+            if paused {
+                handle.resume();
+            } else {
+                handle.pause();
+            }
+        }
+        if ui.button("Yeniden başlat").clicked() {
+            handle.restart();
+            app.notify("kayıt yeniden başlatıldı");
+        }
+        if ui.button("İptal").clicked() {
+            handle.cancel();
+            app.notify("kayıt iptal ediliyor...");
+        }
+
+        let session = handle.session();
+        let elapsed = session.elapsed_ms() / 1000;
+        ui.label(
+            egui::RichText::new(format!(
+                "{:02}:{:02} · {} kare · {:.1} MB",
+                elapsed / 60,
+                elapsed % 60,
+                session.frames(),
+                session.bytes() as f64 / (1024.0 * 1024.0)
+            ))
+            .color(theme::TEXT_DIM),
+        );
+    });
+
+    // Keep the frame ticking so pause/stop stay responsive.
+    ui.ctx().request_repaint();
+}
+
 /// Picks the output path and hands the capture loop to a worker thread.
 fn start(app: &mut ScreenForgeApp) {
     let gif = app.record_gif;
@@ -126,132 +215,114 @@ fn start(app: &mut ScreenForgeApp) {
         return;
     }
 
-    let seconds = app.record_seconds.clamp(1.0, 120.0);
-    let fps = app.record_fps.clamp(1, 30);
+    // Only enabled formats may start; `enabled` is a real setting, not a label.
+    if gif && !app.settings.gif.enabled {
+        app.notify("GIF kaydı ayarlarda kapalı");
+        return;
+    }
+    if !gif && !app.settings.video.enabled {
+        app.notify("video kaydı ayarlarda kapalı");
+        return;
+    }
+
+    // Region: the user's selection, or the whole virtual screen when none.
+    let (x, y, w, h) = match app.record_region {
+        Some(rect) => rect,
+        None => sf_capture::virtual_screen_bounds(),
+    };
+    if w <= 0 || h <= 0 {
+        app.notify("geçerli bir kayıt bölgesi yok");
+        return;
+    }
+
+    let fps = if gif { app.settings.gif.fps } else { app.settings.video.fps }.clamp(1, 60);
+    let seconds = app.record_seconds.clamp(1.0, 600.0);
     let ext = if gif { "gif" } else { "mp4" };
 
-    let Some(path) = rfd::FileDialog::new()
+    // Save into the configured directory by default.
+    let mut dialog = rfd::FileDialog::new()
         .set_file_name(format!("screenforge-kayit.{ext}"))
-        .add_filter(ext.to_uppercase(), &[ext])
-        .save_file()
-    else {
+        .add_filter(ext.to_uppercase(), &[ext]);
+    if !app.settings.save_directory.trim().is_empty() {
+        dialog = dialog.set_directory(&app.settings.save_directory);
+    }
+    let Some(path) = dialog.save_file() else {
         return;
     };
     let path = path.to_string_lossy().into_owned();
 
-    let cancel = cancel_flag();
-    cancel.store(false, Ordering::SeqCst);
-    let slot = result_slot();
-    *slot.lock().unwrap() = None;
+    let handle = PauseHandle::new();
+    let worker = handle.clone();
+    *active_slot().lock().unwrap() = Some(Active { handle: handle.clone(), region: (x, y, w, h), gif });
+
+    let cursor = app.settings.gif.capture_cursor || app.settings.video.capture_cursor;
+    let opts = RecordingOptions {
+        x,
+        y,
+        w,
+        h,
+        fps,
+        max_frames: gif.then(|| (seconds as f64 * fps as f64).round().max(1.0) as u64),
+        max_bytes: gif.then(|| app.settings.gif.max_frame_memory_mb.max(32) as u64 * 1024 * 1024),
+        capture_cursor: cursor,
+        system_audio: !gif && app.settings.video.record_system_audio,
+        microphone: !gif && app.settings.video.record_microphone,
+    };
+    let encode = GifEncode {
+        color_count: app.settings.gif.color_count,
+        quantizer: app.settings.gif.quantizer.clone(),
+        sampling_factor: app.settings.gif.sampling_factor,
+        dithering: app.settings.gif.dithering,
+        use_global_palette: app.settings.gif.use_global_palette,
+    };
+    let quality = app.settings.video.quality;
 
     app.recording = true;
     app.status = "kaydediliyor...".to_string();
 
     std::thread::spawn(move || {
         let outcome = if gif {
-            record_gif(&path, seconds, fps, &cancel)
+            record_gif(&path, &opts, &encode, &worker, &ScreenSource)
         } else {
-            record_mp4(&path, seconds, fps, &cancel)
+            record_mp4(&path, &opts, quality, &worker, &ScreenSource)
         };
+        let cancelled = worker.is_cancelled();
         let msg = match outcome {
-            Ok(n) if cancel.load(Ordering::SeqCst) => format!("kayıt iptal edildi ({n} kare)"),
-            Ok(n) => format!("{n} kare kaydedildi → {path}"),
+            Ok(frames) if cancelled => format!("kayıt iptal edildi ({frames} kare)"),
+            Ok(frames) => format!("{frames} kare kaydedildi → {path}"),
             Err(e) => format!("kayıt hatası: {e}"),
         };
-        *slot.lock().unwrap() = Some(msg);
+        *result_slot().lock().unwrap() = Some(msg);
     });
 }
 
-/// Captures `seconds` × `fps` frames of the virtual screen into an animated GIF.
-fn record_gif(path: &str, seconds: f32, fps: i32, cancel: &AtomicBool) -> Result<usize, String> {
-    use sf_gif::gif_file::{GifFile, Rect};
-
-    let fps = fps.clamp(1, 30);
-    let delay_ms = (1000.0 / fps as f64).round().max(1.0) as i32;
-    let total = (seconds.max(0.1) as f64 * fps as f64).round() as usize;
-
-    let first = sf_capture::capture_virtual_screen()?;
-    let (w, h) = (first.width, first.height);
-    if w <= 0 || h <= 0 {
-        return Err("ekran yakalanamadı".to_string());
-    }
-
-    let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
-    // Buffered writer: frames stream to disk instead of accumulating in memory.
-    let mut gif = GifFile::new(std::io::BufWriter::new(file));
-    gif.set_canvas_size(w, h);
-
-    let rect = Rect { x: 0, y: 0, width: w, height: h };
-    let interval = std::time::Duration::from_millis(delay_ms as u64);
-    let mut frames = 0usize;
-    let mut next = Some(first);
-
-    for _ in 0..total {
-        let started = std::time::Instant::now();
-        let shot = match next.take() {
-            Some(f) => f,
-            None => sf_capture::capture_virtual_screen()?,
-        };
-        gif.add_frame(&shot.bgra, rect, delay_ms, false);
-        frames += 1;
-
-        if cancel.load(Ordering::Relaxed) {
-            break;
-        }
-        let spent = started.elapsed();
-        if spent < interval {
-            std::thread::sleep(interval - spent);
-        }
-    }
-    gif.finish();
-    Ok(frames)
+/// Painted every pass while a recording runs; see `record_overlay`.
+pub fn overlay_spec() -> Option<crate::panels::record_overlay::OverlaySpec> {
+    let slot = active_slot();
+    let active = slot.lock().unwrap();
+    let (region, handle, gif) = {
+        let active = active.as_ref()?;
+        (active.region, active.handle.clone(), active.gif)
+    };
+    let (vx, vy, _, _) = sf_capture::virtual_screen_bounds();
+    Some(crate::panels::record_overlay::OverlaySpec {
+        region,
+        origin: (vx, vy),
+        handle,
+        gif,
+    })
 }
 
-/// Captures `seconds` × `fps` frames of the virtual screen into an H.264 MP4.
-fn record_mp4(path: &str, seconds: f32, fps: i32, cancel: &AtomicBool) -> Result<usize, String> {
-    let fps = fps.clamp(1, 30);
-    let total = (seconds.max(0.1) as f64 * fps as f64).round() as usize;
-
-    let first = sf_capture::capture_virtual_screen()?;
-    // H.264 wants even dimensions; cap the long edge (2560) so a 4K desktop
-    // does not encode at full size and crawl.
-    let (w, h) = sf_media::cap_long_edge(first.width, first.height, sf_media::MAX_LONG_EDGE);
-    if w == 0 || h == 0 {
-        return Err("ekran yakalanamadı".to_string());
+/// Clears the "recording" flag when the worker already reported back but the
+/// panel was not on screen to drain it.
+pub fn sync(app: &mut ScreenForgeApp) {
+    if !app.recording {
+        return;
     }
-
-    let bitrate = sf_media::bits_per_second(sf_settings::VideoQuality::High, w, h);
-    let mut writer = sf_record::Mp4Writer::new(path, w, h, fps, bitrate)?;
-    let frame_dur = writer.frame_duration();
-    let interval = std::time::Duration::from_millis((1000 / fps) as u64);
-
-    let mut frames = 0usize;
-    let mut next = Some(first);
-
-    for i in 0..total {
-        let started = std::time::Instant::now();
-        let shot = match next.take() {
-            Some(f) => f,
-            None => sf_capture::capture_virtual_screen()?,
-        };
-
-        let pixels = if shot.width == w && shot.height == h {
-            shot.bgra
-        } else {
-            sf_edit::image_ops::resize_pixels(&shot.bgra, shot.width, shot.height, w, h)
-        };
-        writer.write_bgra(&pixels, i as i64 * frame_dur)?;
-        frames += 1;
-
-        if cancel.load(Ordering::Relaxed) {
-            break;
-        }
-        let spent = started.elapsed();
-        if spent < interval {
-            std::thread::sleep(interval - spent);
-        }
+    if let Some(msg) = result_slot().lock().unwrap().take() {
+        app.recording = false;
+        app.status = "hazır".to_string();
+        *active_slot().lock().unwrap() = None;
+        app.notify(msg);
     }
-
-    writer.finish()?;
-    Ok(frames)
 }

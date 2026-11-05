@@ -122,17 +122,17 @@ Sınıflandırma:
 
 | Özellik | C# kaynak | Rust durum | Rust kaynak | Eksik olan |
 |---|---|---|---|---|
-| GIF kaydı başlat | `Gif/GifRecorder.cs:257`, `Windows/RecordingLauncher.cs:17` | PARTIAL | `sf-app/src/panels/record.rs:116,166` | Uygulama tüm sanal ekranı kaydeder; seçilen bölgeyi değil |
-| GIF kaydını durdur | `Gif/GifRecorder.cs:316`, `RecordingOverlayWindow.cs:273` | PARTIAL | `record.rs:50` (iptal bayrağı) | Canlı durdur butonu yok; sabit süre sonunda durur |
-| Duraklat / Devam et | `GifRecorder.cs:292,304` | MISSING | — | — |
-| Yeniden başlat | `GifRecorder.cs:348` | MISSING | — | — |
-| Kayıt durum overlay'i (süre/fps/bellek) | `RecordingOverlayWindow.cs:372,386` | MISSING | — | — |
-| FPS ayarı (kayıtta etkin) | `Settings/AppSettings.cs:198`, `GifRecorder.cs:102` | PARTIAL | ayar `sf-settings/src/lib.rs:242` | `settings.gif.fps` tüketicisi yok (yalnız CLI yazdırır, `sf-cli/src/main.rs:312`); kayıt kendi `app.record_fps`'ini kullanır |
-| Kayıt bölgesi | `GifRecorder.cs:172` | PARTIAL | bölge seçici var (`sf-capture/src/overlay_window.rs`) | `record_gif` bölgeyi yok sayıp `capture_virtual_screen()` çağırır (`record.rs:173`) |
-| İmleç yakalama (kayıtta) | `GifRecorder.cs:153`, `Gif/Input/CursorCapture.cs:73` | MISSING | alan: `sf-settings/src/lib.rs:251` | `GetCursorInfo`/`CopyIcon` yok; ayar hiç okunmuyor |
+| GIF kaydı başlat | `Gif/GifRecorder.cs:257`, `Windows/RecordingLauncher.cs:17` | PORTED | `sf-app/src/panels/record.rs:200`, `panels/record_worker.rs:80` | — |
+| GIF kaydını durdur | `Gif/GifRecorder.cs:316`, `RecordingOverlayWindow.cs:273` | PORTED | `record.rs:186` (İptal), `record_overlay.rs` (Durdur) | — |
+| Duraklat / Devam et | `GifRecorder.cs:292,304` | PORTED | `sf-record/src/session.rs:70,74`, `record.rs:177` | — |
+| Yeniden başlat | `GifRecorder.cs:348` | PORTED | `session.rs:84`, `record_worker.rs:139` | Kareler atılır, aynı dosyaya devam edilir (C# de öyle) |
+| Kayıt durum overlay'i (süre/fps/bellek) | `RecordingOverlayWindow.cs:372,386` | PORTED | `record_overlay.rs:59` (ayrı egui viewport'u) | `WDA_EXCLUDEFROMCAPTURE` yok; çubuk kayıt bölgesinin üstüne konumlanır |
+| FPS ayarı (kayıtta etkin) | `Settings/AppSettings.cs:198`, `GifRecorder.cs:102` | PORTED | `record.rs:229` → `settings.gif.fps` / `settings.video.fps` | — |
+| Kayıt bölgesi | `GifRecorder.cs:172` | PORTED | `overlay_window.rs` (seçici) → `record_worker.rs:96` (`capture_region`) | — |
+| İmleç yakalama (kayıtta) | `GifRecorder.cs:153`, `Gif/Input/CursorCapture.cs:73` | PORTED | `sf-capture/src/overlay_window.rs:draw_cursor`, `record_worker.rs:143` | GDI `DrawIconEx` ile; tıklama vurgusu/halka yok |
 | Klavye/tuş overlay'i (GIF üstüne tuş etiketleri) | `GifRecorder.cs:159`, `Gif/Input/KeyLabels.cs:11`, `InputOverlayRenderer.cs:82` | MISSING | kısmi: `sf-capture/src/key_labels.rs:8` | Piksel render'ı ve `FrameInput` üreticisi yok; `key_labels` yalnız test çağrısı |
 | Girdi olayı zamanlaması (kare başına girdi) | `GifRecorder.cs:193,215`, `Gif/Input/FrameInput.cs:7` | MISSING | yapı: `sf-edit/src/frame.rs:19` | Gerçek hook'tan `FrameInput` üreten yok |
-| Kare deposu / bellek limiti | `Gif/FrameStore.cs:20`, `GifRecorder.cs:31,162` | PARTIAL | `sf-gif/src/frame_store.rs:11` | Bayt bütçesi takibi ve limit-olayı/UI yok |
+| Kare deposu / bellek limiti | `Gif/FrameStore.cs:20`, `GifRecorder.cs:31,162` | PORTED | `sf-gif/src/frame_store.rs:11`, limit `record.rs:262` | GIF kareleri diske akar; limit yakalanan ham bayt üzerinden ölçülür |
 | Nicemleyici seçimi (Neural/Octree) | `Gif/Encoder/QuantizerType.cs`, `NeuralQuantizer.cs:13` | PARTIAL | `sf-gif/src/quantize.rs:51,282` | Motor portlanmış ama GUI her yerde `QuantizerType::Octree` sabitliyor (`panels/gif.rs:352`) |
 | Palet / renk sayısı / dither / global palet | `Gif/Encoder/GifFile.cs:18,27,30`, `GifEditorWindow.Panels.cs:154,182` | PARTIAL | `sf-gif/src/gif_file.rs:32,38,39` | `panels/gif.rs:351` 256'yı sabitliyor; dither/global/tolerance hiç set edilmiyor |
 | Döngü / tekrar sayısı | `GifFile.cs:15`, `GifEditorWindow.xaml.cs:868` | PARTIAL | `sf-gif/src/gif_file.rs:29` | UI/CLI bayrağı yok; her zaman sonsuz döngü |

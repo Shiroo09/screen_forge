@@ -8,7 +8,8 @@ use sf_draw::model::Tool;
 use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Gdi::{
-    CreateFontW, CreatePen, CreateSolidBrush, DeleteObject, DrawTextW, Ellipse, GetStockObject,
+    CreateFontW, CreatePen, CreateSolidBrush, DeleteObject, DrawTextW, Ellipse, FrameRect,
+    GetStockObject, HBRUSH,
     GetTextExtentPoint32W, HGDIOBJ, LineTo, MoveToEx, Polygon, Rectangle, RestoreDC, RoundRect,
     SaveDC, SelectObject, SetBkMode, SetTextColor, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
     DEFAULT_CHARSET, DEFAULT_PITCH, DT_CENTER, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, FF_SWISS,
@@ -963,6 +964,48 @@ pub fn draw_toast(hdc: HDC, anchor_x: i32, client_w: i32, y: i32, scale: f32, te
         let _ = RestoreDC(hdc, saved);
     }
     r
+}
+
+/// Seçim çerçevesi ve boyutlandırma tutamaçları. `grab` hem yakalama
+/// toleransıdır hem de tutamacın yarı boyutu; ikisi aynı olmazsa kullanıcı
+/// gördüğü kareyi tuttuğunda boyutlandırma başlamaz.
+pub fn draw_selection_handles(hdc: HDC, rect: (i32, i32, i32, i32), grab: i32, scale: f32) {
+    let (x, y, w, h) = rect;
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let saved = unsafe { SaveDC(hdc) };
+    // Çerçeve FrameRect ile çizilir: pen+Rectangle yolunda GDI son pikseli
+    // dışlar ve sağ/alt kenar hiç görünmez (ölçüldü: yalnız sol/üst çiziliyordu).
+    let accent = GdiObj(unsafe { CreateSolidBrush(cref(ACCENT)).into() });
+    let frame = rect_at(x, y, w, h);
+    unsafe {
+        let _b = Sel::new(hdc, &accent);
+        let _ = FrameRect(hdc, &frame, HBRUSH(accent.0 .0));
+    }
+    // Sekiz tutamaç: dört köşe + dört kenar ortası.
+    let half = grab.max(2);
+    let centers = [
+        (x, y),
+        (x + w / 2, y),
+        (x + w, y),
+        (x + w, y + h / 2),
+        (x + w, y + h),
+        (x + w / 2, y + h),
+        (x, y + h),
+        (x, y + h / 2),
+    ];
+    let fill = unsafe { GdiObj(CreateSolidBrush(cref(WHITE)).into()) };
+    let edge = unsafe { GdiObj(CreatePen(PS_SOLID, scaled(scale, 1).max(1), cref(ACCENT)).into()) };
+    unsafe {
+        let _pen = Sel::new(hdc, &edge);
+        let _brush = Sel::new(hdc, &fill);
+        for (cx, cy) in centers {
+            let r = rect_at(cx - half, cy - half, half * 2, half * 2);
+            let _ = RoundRect(hdc, r.left, r.top, r.right, r.bottom, half, half);
+        }
+    }
+    let _ = unsafe { RestoreDC(hdc, saved) };
 }
 
 #[cfg(test)]

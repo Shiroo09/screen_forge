@@ -199,12 +199,12 @@ pub fn ui(app: &mut ScreenForgeApp, ui: &mut egui::Ui) {
 /// Applies the clicked action, with full access to the app state.
 fn run(app: &mut ScreenForgeApp, action: Action, has_image: bool) {
     match action {
-        Action::FullScreen => match sf_capture::capture_virtual_screen() {
+        Action::FullScreen => match grab(app, None) {
             Ok(c) => set_captured(app, ImageBuf::from_captured(c), "tam ekran yakalandı"),
             Err(e) => app.notify(format!("hata: {e}")),
         },
         Action::Region => match sf_capture::overlay_window::pick_region() {
-            Some(rect) => match sf_capture::capture_region(rect.0, rect.1, rect.2, rect.3) {
+            Some(rect) => match grab(app, Some(rect)) {
                 Ok(c) => {
                     let label = format!("bölge yakalandı ({}×{})", rect.2, rect.3);
                     set_captured(app, ImageBuf::from_captured(c), &label)
@@ -262,6 +262,20 @@ fn run(app: &mut ScreenForgeApp, action: Action, has_image: bool) {
                 Err(e) => app.notify(format!("hata: {e}")),
             }
         }
+    }
+}
+
+/// Grabs the virtual screen, or `rect` when given, honouring `show_cursor`.
+/// The cursor is composited into the capture itself so it survives annotation.
+fn grab(app: &ScreenForgeApp, rect: Option<(i32, i32, i32, i32)>) -> Result<sf_capture::Captured, String> {
+    match (app.settings.show_cursor, rect) {
+        (true, Some(r)) => sf_capture::capture_region_with_cursor(r.0, r.1, r.2, r.3),
+        (true, None) => {
+            let (vx, vy, vw, vh) = sf_capture::virtual_screen_bounds();
+            sf_capture::capture_region_with_cursor(vx, vy, vw, vh)
+        }
+        (false, Some(r)) => sf_capture::capture_region(r.0, r.1, r.2, r.3),
+        (false, None) => sf_capture::capture_virtual_screen(),
     }
 }
 

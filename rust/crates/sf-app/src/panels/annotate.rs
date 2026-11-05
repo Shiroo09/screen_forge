@@ -481,13 +481,18 @@ fn export(app: &mut ScreenForgeApp) {
     };
 
     let rgba = to_rgba(&bgra);
+    let quality = app.settings.quality.clamp(1, 100) as u8;
     let result = image::RgbaImage::from_raw(w as u32, h as u32, rgba)
         .ok_or_else(|| "görüntü boyutu uyuşmadı".to_string())
         .and_then(|image| match format {
             sf_settings::ImageFormat::Png => image.save(&path).map_err(|e| e.to_string()),
             sf_settings::ImageFormat::Jpeg => {
                 let rgb = image::DynamicImage::ImageRgba8(image).to_rgb8();
-                rgb.save(&path).map_err(|e| e.to_string())
+                let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+                let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, quality);
+                encoder
+                    .encode_image(&rgb)
+                    .map_err(|e| format!("jpeg: {e}"))
             }
             sf_settings::ImageFormat::Webp => image
                 .save_with_format(&path, image::ImageFormat::WebP)

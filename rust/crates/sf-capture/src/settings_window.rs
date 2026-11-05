@@ -44,6 +44,7 @@ mod imp {
     const ID_GIF_FPS: i32 = 107;
     const ID_VIDEO: i32 = 108;
     const ID_VIDEO_FPS: i32 = 109;
+    const ID_AUTOCLOSE: i32 = 110;
     const ID_OK: i32 = 1;
     const ID_CANCEL: i32 = 2;
 
@@ -68,6 +69,7 @@ mod imp {
         show_cursor: HWND,
         launch: HWND,
         autocopy: HWND,
+        autoclose: HWND,
         format: HWND,
         quality: HWND,
         savedir: HWND,
@@ -99,6 +101,7 @@ mod imp {
                 show_cursor: HWND(std::ptr::null_mut()),
                 launch: HWND(std::ptr::null_mut()),
                 autocopy: HWND(std::ptr::null_mut()),
+                autoclose: HWND(std::ptr::null_mut()),
                 format: HWND(std::ptr::null_mut()),
                 quality: HWND(std::ptr::null_mut()),
                 savedir: HWND(std::ptr::null_mut()),
@@ -209,6 +212,7 @@ mod imp {
         s.show_cursor = checkbox(hwnd, instance.into(), ID_SHOW_CURSOR, "İmleci göster", LBL_X, next_row(), s.settings.show_cursor);
         s.launch = checkbox(hwnd, instance.into(), ID_LAUNCH, "Başlangıçta çalıştır", LBL_X, next_row(), s.settings.launch_at_startup);
         s.autocopy = checkbox(hwnd, instance.into(), ID_AUTOCOPY, "Yükledikten sonra linki kopyala", LBL_X, next_row(), s.settings.auto_copy_link_after_upload);
+        s.autoclose = checkbox(hwnd, instance.into(), ID_AUTOCLOSE, "Yükleme penceresini otomatik kapat", LBL_X, next_row(), s.settings.auto_close_upload_window);
 
         // Output format combo.
         let y = next_row();
@@ -410,6 +414,7 @@ mod imp {
         s.settings.show_cursor = checked(s.show_cursor);
         s.settings.launch_at_startup = checked(s.launch);
         s.settings.auto_copy_link_after_upload = checked(s.autocopy);
+        s.settings.auto_close_upload_window = checked(s.autoclose);
 
         s.settings.output_format = match SendMessageW(s.format, CB_GETCURSEL, Some(WPARAM(0)), Some(LPARAM(0))).0 {
             1 => ImageFormat::Jpeg,

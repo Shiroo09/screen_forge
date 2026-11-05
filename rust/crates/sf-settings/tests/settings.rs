@@ -62,6 +62,26 @@ fn round_trips_through_json() {
 }
 
 #[test]
+fn recording_settings_are_read_and_defaulted() {
+    // Everything the Record panel reads must exist and round-trip.
+    let settings = AppSettings::deserialize(&fixture_json()).expect("fixture");
+
+    assert_eq!(settings.gif.color_count, 128);
+    assert_eq!(settings.gif.sampling_factor, 5);
+    assert!(settings.gif.dithering, "dithering is read by the encoder");
+    assert_eq!(settings.gif.max_frame_memory_mb, 1024);
+    assert!(settings.gif.capture_cursor);
+    assert_eq!(settings.gif.highlight_radius, 12.0);
+
+    let defaults = AppSettings::default();
+    assert!(defaults.video.record_system_audio);
+    assert!(!defaults.video.record_microphone);
+    assert!(defaults.video.show_countdown);
+    assert!(defaults.gif.optimize_unchanged_pixels);
+    assert_eq!(defaults.gif.change_tolerance, 0);
+}
+
+#[test]
 fn writes_csharp_compatible_field_names_and_flag_string() {
     let mut flags = Modifiers::empty();
     flags.insert(Modifiers::ALT);

@@ -7,6 +7,20 @@
 
 use crate::selection::{SelectionRect, SelectionState};
 
+/// Composites the live mouse cursor onto a captured frame. `origin_x`/`origin_y`
+/// are the buffer's top-left corner in virtual-screen coordinates, so the cursor
+/// lands at the right spot even on a secondary monitor with negative origin.
+/// Skips silently when the cursor is hidden or outside the frame.
+#[cfg(windows)]
+pub fn draw_cursor(shot: &mut crate::screen::Captured, origin_x: i32, origin_y: i32) -> bool {
+    imp::draw_cursor(shot, origin_x, origin_y)
+}
+
+#[cfg(not(windows))]
+pub fn draw_cursor(_shot: &mut crate::screen::Captured, _origin_x: i32, _origin_y: i32) -> bool {
+    false
+}
+
 /// Runs the region picker and returns the chosen rectangle in virtual-screen
 /// coordinates, or `None` if the user cancelled (Esc / right-click).
 #[cfg(windows)]
@@ -261,6 +275,92 @@ mod imp {
     }
     fn hiword(v: u32) -> u16 {
         ((v >> 16) & 0xFFFF) as u16
+    }
+
+    /// Port of `ScreenForge/Gif/Input/CursorCapture.cs`: draw the arrow into the
+    /// captured bitmap. Returns false when there is nothing to draw (hidden
+    /// cursor, or outside the frame) so the caller can cheaply skip the blit.
+    pub fn draw_cursor(shot: &mut crate::screen::Captured, origin_x: i32, origin_y: i32) -> bool {
+        use windows::Win32::Graphics::Gdi::{
+            CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC,
+            SelectObject, HGDIOBJ,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CopyIcon, CURSOR_SHOWING, DestroyIcon, DrawIconEx, GetCursorInfo, DI_NORMAL,
+        };
+
+        if shot.width <= 0 || shot.height <= 0 {
+            return false;
+        }
+
+        unsafe {
+            let mut info = windows::Win32::UI::WindowsAndMessaging::CURSORINFO {
+                cbSize: std::mem::size_of::<windows::Win32::UI::WindowsAndMessaging::CURSORINFO>()
+                    as u32,
+                ..Default::default()
+            };
+            if GetCursorInfo(&mut info).is_err() || info.flags.0 & CURSOR_SHOWING.0 == 0 {
+                return false;
+            }
+            let x = info.ptScreenPos.x - origin_x;
+            let y = info.ptScreenPos.y - origin_y;
+            if x < 0 || y < 0 || x >= shot.width || y >= shot.height {
+                return false;
+            }
+
+            // The shared cursor handle must not be destroyed; work on a copy.
+            let Ok(cursor) = CopyIcon(info.hCursor.into()) else {
+                return false;
+            };
+
+            let screen_dc = GetDC(None);
+            let mem_dc = CreateCompatibleDC(Some(screen_dc));
+
+            let info32 = windows::Win32::Graphics::Gdi::BITMAPINFO {
+                bmiHeader: windows::Win32::Graphics::Gdi::BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<windows::Win32::Graphics::Gdi::BITMAPINFOHEADER>()
+                        as u32,
+                    biWidth: shot.width,
+                    biHeight: -shot.height,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: windows::Win32::Graphics::Gdi::BI_RGB.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+            let Ok(dib) = CreateDIBSection(
+                Some(mem_dc),
+                &info32,
+                windows::Win32::Graphics::Gdi::DIB_RGB_COLORS,
+                &mut bits,
+                None,
+                0,
+            ) else {
+                let _ = DeleteDC(mem_dc);
+                ReleaseDC(None, screen_dc);
+                let _ = DestroyIcon(cursor);
+                return false;
+            };
+
+            let old = SelectObject(mem_dc, HGDIOBJ(dib.0));
+            let len = (shot.width * shot.height * 4) as usize;
+            std::ptr::copy_nonoverlapping(shot.bgra.as_ptr(), bits as *mut u8, len);
+
+            let _ = DrawIconEx(mem_dc, x, y, cursor, 0, 0, 0, None, DI_NORMAL);
+
+            std::ptr::copy_nonoverlapping(bits as *const u8, shot.bgra.as_mut_ptr(), len);
+
+            if !old.is_invalid() {
+                SelectObject(mem_dc, old);
+            }
+            let _ = DeleteObject(HGDIOBJ(dib.0));
+            let _ = DeleteDC(mem_dc);
+            ReleaseDC(None, screen_dc);
+            let _ = DestroyIcon(cursor);
+            true
+        }
     }
 
 }

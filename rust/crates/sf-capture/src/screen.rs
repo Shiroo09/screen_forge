@@ -55,8 +55,9 @@ mod imp {
         HBITMAP, HDC, HGDIOBJ, SRCCOPY,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-        SM_YVIRTUALSCREEN,
+        CopyIcon, DestroyIcon, DrawIconEx, GetCursorInfo, GetIconInfo, GetSystemMetrics, CURSORINFO,
+        CURSOR_SHOWING, DI_NORMAL, HICON, ICONINFO, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+        SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
     };
 
     /// The virtual screen rectangle across all monitors: (x, y, width, height).
@@ -92,6 +93,22 @@ mod imp {
 
     /// Captures the screen region at `(x, y, w, h)` in virtual-screen coordinates.
     pub fn capture_region(x: i32, y: i32, w: i32, h: i32) -> Result<Captured, String> {
+        capture_region_impl(x, y, w, h, false)
+    }
+
+    /// Captures the region with the cursor composited in, for the
+    /// `show_cursor` setting. Port of `ScreenCapture.CaptureVirtualScreen(true)`.
+    pub fn capture_region_with_cursor(x: i32, y: i32, w: i32, h: i32) -> Result<Captured, String> {
+        capture_region_impl(x, y, w, h, true)
+    }
+
+    fn capture_region_impl(
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        with_cursor: bool,
+    ) -> Result<Captured, String> {
         if w <= 0 || h <= 0 {
             return Err("invalid capture size".to_string());
         }
@@ -119,6 +136,9 @@ mod imp {
             let mut result: Result<Captured, String> = Err("BitBlt failed".to_string());
 
             if BitBlt(mem_dc, 0, 0, w, h, Some(screen_dc), x, y, SRCCOPY | CAPTUREBLT).is_ok() {
+                if with_cursor {
+                    draw_cursor(mem_dc, x, y, w, h);
+                }
                 let mut info = BITMAPINFO {
                     bmiHeader: BITMAPINFOHEADER {
                         biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -165,6 +185,43 @@ mod imp {
             result
         }
     }
+
+    /// Draws the live cursor icon into `target` at its on-screen position.
+    /// `origin_x`/`origin_y` are the virtual-screen coordinates of `target`'s
+    /// top-left corner. A hidden cursor or a failing Win32 call draws nothing,
+    /// matching the C# original which swallowed the same errors.
+    /// Port of `ScreenCapture.DrawCursor`.
+    ///
+    /// shortcut: the icon is clipped to the capture rectangle, so a cursor half
+    /// outside a region capture loses the overhanging half; upgrade if the
+    /// region picker starts capturing asymmetric selections.
+    unsafe fn draw_cursor(target: HDC, origin_x: i32, origin_y: i32, w: i32, h: i32) {
+        let mut ci = CURSORINFO {
+            cbSize: std::mem::size_of::<CURSORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetCursorInfo(&mut ci).is_err() || ci.flags != CURSOR_SHOWING {
+            return;
+        }
+
+        let Ok(icon) = CopyIcon(HICON(ci.hCursor.0)) else { return };
+        let mut info = ICONINFO::default();
+        if GetIconInfo(icon, &mut info).is_err() {
+            let _ = DestroyIcon(icon);
+            return;
+        }
+        if !info.hbmColor.is_invalid() {
+            let _ = DeleteObject(HGDIOBJ(info.hbmColor.0));
+        }
+        if !info.hbmMask.is_invalid() {
+            let _ = DeleteObject(HGDIOBJ(info.hbmMask.0));
+        }
+
+        let hotspot_x = ci.ptScreenPos.x - origin_x - info.xHotspot as i32;
+        let hotspot_y = ci.ptScreenPos.y - origin_y - info.yHotspot as i32;
+        let _ = DrawIconEx(target, hotspot_x, hotspot_y, icon, w, h, 0, None, DI_NORMAL);
+        let _ = DestroyIcon(icon);
+    }
 }
 
 #[cfg(not(windows))]
@@ -182,6 +239,18 @@ mod imp {
     pub fn capture_region(_x: i32, _y: i32, _w: i32, _h: i32) -> Result<Captured, String> {
         Err("screen capture is only supported on Windows".to_string())
     }
+
+    /// No cursor compositing off Windows.
+    pub fn capture_region_with_cursor(
+        _x: i32,
+        _y: i32,
+        _w: i32,
+        _h: i32,
+    ) -> Result<Captured, String> {
+        Err("screen capture is only supported on Windows".to_string())
+    }
 }
 
-pub use imp::{capture_region, capture_virtual_screen, virtual_screen_bounds};
+pub use imp::{
+    capture_region, capture_region_with_cursor, capture_virtual_screen, virtual_screen_bounds,
+};
