@@ -21,24 +21,59 @@ pub fn run_tray() {
         std::env::temp_dir()
     };
 
-    let mods = settings.region_hotkey.modifiers.0 as u32;
-    let vk = vk_from(&settings.region_hotkey).unwrap_or(0x53);
-
     let count = Arc::new(AtomicU32::new(0));
 
-    let reg = match sf_capture::hotkey::register(mods, vk, {
-        let out_dir = out_dir.clone();
-        let count = Arc::clone(&count);
-        let format = settings.output_format;
-        let quality = settings.quality;
-        move || capture_once(&count, &out_dir, format, quality)
-    }) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("kısayol kaydedilemedi: {e}");
-            return;
+    // Her kısayol kendi kaydını tutar: biri çakışsa bile diğerleri çalışır.
+    // Ayar `is_valid()` ile doldurulmamışsa (modifiers boş) atlanır — boş bir
+    // kısayolu kaydetmeye çalışmak RegisterHotKey'i boşuna dener.
+    let mut regs: Vec<sf_capture::hotkey::HotkeyRegistration> = Vec::new();
+    for (name, cfg, job) in [
+        (
+            "bölge",
+            settings.region_hotkey.clone(),
+            Job::Region,
+        ),
+        ("tam ekran", settings.full_screen_hotkey, Job::FullScreen),
+        (
+            "tam ekran + yükle",
+            settings.full_screen_upload_hotkey,
+            Job::FullScreenUpload,
+        ),
+        ("kolaj", settings.collage_hotkey, Job::Collage),
+        (
+            "hızlı çeviri",
+            settings.quick_translate_hotkey,
+            Job::Translate,
+        ),
+    ] {
+        let modifiers = cfg.modifiers.0 as u32;
+        // Atlanan her kısayol gerekçesiyle bildirilir: sessiz yutma, kullanıcıya
+        // "ayarlarda aktif görünüyor ama çalışmıyor" dedirtiyordu.
+        let Some(vk) = vk_from(&cfg) else {
+            eprintln!("kısayol atlandı ({name}): tuş tanınmadı ({:?})", cfg.key);
+            continue;
+        };
+        if modifiers == 0 {
+            eprintln!("kısayol atlandı ({name}): değiştirici tuş yok");
+            continue;
         }
-    };
+        let (d, c, f, q) = (
+            out_dir.clone(),
+            Arc::clone(&count),
+            settings.output_format,
+            settings.quality,
+        );
+        match sf_capture::hotkey::register(modifiers, vk, move || run_job(job, &c, &d, f, q)) {
+            Ok(r) => regs.push(r),
+            Err(e) => eprintln!("kısayol kaydedilemedi ({name}): {e}"),
+        }
+    }
+
+    if regs.is_empty() {
+        eprintln!("hiçbir kısayol kaydedilemedi; tepsi menüsü yine çalışır");
+    } else {
+        eprintln!("{} kısayol kaydedildi", regs.len());
+    }
 
     // Tray icon with the original menu. Left-click captures; right-click opens
     // the menu (same items as the C# app's TrayIconService).
@@ -57,6 +92,17 @@ pub fn run_tray() {
             Box::new(move || capture_fullscreen(&c, &d, f, q)),
         ));
 
+        let (d, c, f, q) = (out_dir.clone(), Arc::clone(&count), settings.output_format, settings.quality);
+        items.push((
+            "Tam Ekran + Buluta Yükle".to_string(),
+            Box::new(move || upload_fullscreen(&c, &d, f, q)),
+        ));
+
+        items.push((
+            "Kolaj".to_string(),
+            Box::new(|| open_window("collage")),
+        ));
+
         items.push((
             "Renk Seçici".to_string(),
             Box::new(|| match sf_capture::color_picker::pick_color() {
@@ -72,7 +118,7 @@ pub fn run_tray() {
         ));
         items.push((
             "Hızlı Çeviri".to_string(),
-            Box::new(|| eprintln!("hızlı çeviri: pencereyi aç (--window)")),
+            Box::new(|| open_window("translate")),
         ));
         items.push((
             "Ayarlar".to_string(),
@@ -111,7 +157,64 @@ pub fn run_tray() {
     // Park the main thread; hotkey/tray threads do the work.
     loop {
         std::thread::sleep(std::time::Duration::from_secs(3600));
-        let _ = (&reg, &tray);
+        let _ = (&regs, &tray);
+    }
+}
+
+/// Kısayolların tetiklediği işler; menü öğeleriyle aynı gövdeyi paylaşır.
+#[derive(Clone, Copy)]
+enum Job {
+    Region,
+    FullScreen,
+    FullScreenUpload,
+    Collage,
+    Translate,
+}
+
+fn run_job(
+    job: Job,
+    count: &AtomicU32,
+    out_dir: &std::path::Path,
+    format: sf_settings::ImageFormat,
+    quality: i32,
+) {
+    match job {
+        Job::Region => capture_once(count, out_dir, format, quality),
+        Job::FullScreen => capture_fullscreen(count, out_dir, format, quality),
+        // Tam ekran + yükle: yakala, kaydet, Litterbox'a gönder.
+        Job::FullScreenUpload => upload_fullscreen(count, out_dir, format, quality),
+        // Kolaj kısayolu pencereyi kolaj sekmesinde açar; kolaj birden çok
+        // görsel ister, tek yakalamayla anlamı yok.
+        Job::Collage => open_window("collage"),
+        Job::Translate => open_window("translate"),
+    }
+}
+
+/// Yükleme kısayolu: tam ekran yakala, diske yaz, bağlantıyı stdout'a bas.
+fn upload_fullscreen(
+    count: &AtomicU32,
+    out_dir: &std::path::Path,
+    format: sf_settings::ImageFormat,
+    quality: i32,
+) {
+    let n = count.fetch_add(1, Ordering::SeqCst) + 1;
+    let Ok(shot) = sf_capture::capture_virtual_screen() else {
+        eprintln!("tam ekran {n}: yakalanamadı");
+        return;
+    };
+    let _ = sf_capture::copy_bgra_to_clipboard(shot.width, shot.height, &shot.bgra);
+    let ext = match format {
+        sf_settings::ImageFormat::Png => "png",
+        sf_settings::ImageFormat::Jpeg => "jpg",
+        sf_settings::ImageFormat::Webp => "webp",
+    };
+    let path = out_dir.join(format!("ScreenForge-tam-{n}.{ext}"));
+    match write_image(&path, &shot, format, quality) {
+        Ok(()) => match sf_net::http_upload::upload_file(&path.to_string_lossy()) {
+            Ok(url) => eprintln!("tam ekran {n}: yüklendi {url}"),
+            Err(e) => eprintln!("tam ekran {n}: yükleme hatası: {e}"),
+        },
+        Err(e) => eprintln!("tam ekran {n}: hata: {e}"),
     }
 }
 
@@ -169,7 +272,7 @@ fn capture_once(
                 return;
             }
             eprintln!("yakalama {n}: kaydedildi {} · çeviri için pencere açılıyor", path.display());
-            open_translate_window();
+            open_window("translate");
         }
         // "Buluta yükle" diske yazıp Litterbox'a gönderir; bağlantı stdout'a düşer.
         Some(Action::Upload) => {
@@ -192,12 +295,12 @@ fn capture_once(
     }
 }
 
-/// Launches `--window --tab translate` as a child process so the overlay's
-/// "Çevir" action has somewhere to land.
-fn open_translate_window() {
+/// Launches `--window --tab <tab>` as a child process: the overlay's "Çevir"
+/// action and the kolaj/çeviri kısayolları buradan pencereye iner.
+fn open_window(tab: &str) {
     let Ok(exe) = std::env::current_exe() else { return };
     let _ = std::process::Command::new(exe)
-        .args(["--window", "--tab", "translate"])
+        .args(["--window", "--tab", tab])
         .spawn();
 }
 
@@ -265,8 +368,10 @@ fn vk_from(hotkey: &sf_settings::HotkeyConfig) -> Option<u32> {
     if b.len() == 2 && (b[0] == b'D' || b[0] == b'd') && b[1].is_ascii_digit() {
         return Some(b[1] as u32);
     }
-    if b.len() == 1 && b[0].is_ascii_uppercase() {
-        return Some(b[0] as u32);
+    // Tek harf, büyük/küçük fark etmez: ayar dosyasına elle "s" yazılmış
+    // olabilir ve `is_valid()` yalnız boş olup olmadığına bakıyor.
+    if b.len() == 1 && b[0].is_ascii_alphabetic() {
+        return Some(b[0].to_ascii_uppercase() as u32);
     }
     Some(match key {
         "Escape" => 0x1B,

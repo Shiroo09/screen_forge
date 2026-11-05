@@ -23,6 +23,7 @@ fn main() -> eframe::Result<()> {
                 "record" => Some(app::Tab::Record),
                 "gif" => Some(app::Tab::Gif),
                 "translate" => Some(app::Tab::Translate),
+                "collage" => Some(app::Tab::Collage),
                 "settings" => Some(app::Tab::Settings),
                 _ => None,
             });

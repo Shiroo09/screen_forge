@@ -16,16 +16,18 @@ pub enum Tab {
     Record,
     Gif,
     Translate,
+    Collage,
     Settings,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 6] = [
+    pub const ALL: [Tab; 7] = [
         Tab::Capture,
         Tab::Annotate,
         Tab::Record,
         Tab::Gif,
         Tab::Translate,
+        Tab::Collage,
         Tab::Settings,
     ];
 
@@ -36,6 +38,7 @@ impl Tab {
             Tab::Record => "Kayıt",
             Tab::Gif => "GIF",
             Tab::Translate => "Çeviri",
+            Tab::Collage => "Kolaj",
             Tab::Settings => "Ayarlar",
         }
     }
@@ -49,6 +52,7 @@ impl Tab {
             Tab::Record => IconName::Record,
             Tab::Gif => IconName::Layers,
             Tab::Translate => IconName::Translate,
+            Tab::Collage => IconName::Layers,
             Tab::Settings => IconName::Settings,
         }
     }
@@ -249,6 +253,7 @@ impl eframe::App for ScreenForgeApp {
             Tab::Record => crate::panels::record::ui(self, ui),
             Tab::Gif => crate::panels::gif::ui(self, ui),
             Tab::Translate => crate::panels::translate::ui(self, ui),
+            Tab::Collage => crate::panels::collage::ui(self, ui),
             Tab::Settings => crate::panels::settings::ui(self, ui),
         });
         self.toast_ui(ui.ctx());
