@@ -689,6 +689,13 @@ fn edit_flow(out: &str) -> Result<String, String> {
     }
 
     write_by_extension(out, shot.width, shot.height, &shot.bgra)?;
+
+    // Aksiyon çubuğu "Kopyala"ya basıldıysa görüntü panoya da gider; eskiden
+    // yalnız dosya yazılıyordu ve iki çip aynı davranıyordu.
+    if result.action == Some(sf_capture::overlay_chrome::Action::Copy) {
+        sf_capture::copy_bgra_to_clipboard(shot.width, shot.height, &shot.bgra)?;
+    }
+
     Ok(format!(
         "edited ({x},{y},{w},{h}) with {} shape(s) -> wrote {out}",
         result.shapes.len()
