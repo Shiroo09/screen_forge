@@ -92,11 +92,25 @@ pub struct EditResult {
 /// Opens the interactive overlay. Returns `None` if the user cancels.
 #[cfg(windows)]
 pub fn edit_region() -> Option<EditResult> {
-    imp::edit_region()
+    imp::run(false)
 }
 
 #[cfg(not(windows))]
 pub fn edit_region() -> Option<EditResult> {
+    None
+}
+
+/// Yalnız bölge seçtirir: seçim biter bitmez kapanır, düzenleme araçları
+/// gösterilmez. Kayıt panelinin "Bölge seç"i ve `sf-cli select` kullanır.
+/// Krom (logo, mod çubuğu, karartma) `edit_region` ile aynıdır — eskiden bu
+/// yol ayrı bir pencereden geçtiği için menüsüz/karartmasız görünüyordu.
+#[cfg(windows)]
+pub fn pick_region_only() -> Option<SelectionRect> {
+    imp::run(true).map(|e| e.region)
+}
+
+#[cfg(not(windows))]
+pub fn pick_region_only() -> Option<SelectionRect> {
     None
 }
 
@@ -171,6 +185,8 @@ mod imp {
         moving: Option<(usize, f32, f32)>,
         /// Bitmiş seçimin tutamaçtan boyutlandırılması/taşınması.
         select_drag: Option<SelectDrag>,
+        /// Yalnız bölge seç: seçim bitince düzenlemeye geçmeden kapan.
+        simple: bool,
         drag_start: (f32, f32),
         pen_points: Vec<(f32, f32)>,
         step_count: u32,
@@ -187,7 +203,10 @@ mod imp {
         action: Option<Action>,
     }
 
-    pub fn edit_region() -> Option<EditResult> {
+    /// Overlay'i koşturur. `simple` true iken bölge seçilir seçilmez biter:
+    /// düzenleme araçları hiç gösterilmez (kayıt panelinin "Bölge seç"i ve
+    /// `sf-cli select` bunu ister).
+    pub fn run(simple: bool) -> Option<EditResult> {
         let cursor = cursor_monitor();
         let shot = match cursor {
             Some((x, y, w, h)) => crate::screen::capture_region(x, y, w, h).ok()?,
@@ -233,6 +252,7 @@ mod imp {
                 clickables: Vec::new(),
                 stroke_width: sf_draw::LINE_WIDTH.round() as u32,
                 action: None,
+                simple,
             };
 
             let hwnd = CreateWindowExW(
@@ -448,6 +468,12 @@ mod imp {
                                 rect.2,
                                 rect.3,
                             ));
+                            if s.simple {
+                                // Yalnız seçim isteniyordu: bölge yeter, kapat.
+                                s.cancelled = false;
+                                let _ = DestroyWindow(hwnd);
+                                return LRESULT(0);
+                            }
                             // Switch to drawing inside the selection.
                             s.phase = Phase::Drawing;
                             let _ = InvalidateRect(Some(hwnd), None, false);
@@ -610,6 +636,11 @@ mod imp {
                 let _ = unsafe { DestroyWindow(hwnd) };
             }
             Hit::Mode(ModeChoice::Region) => {}
+            // Serbest: bölge seçmeden tüm ekranı düzenlemeye açar (C# `CaptureMode.Free`).
+            Hit::Mode(ModeChoice::Freeform) => {
+                s.region = Some((s.origin.0, s.origin.1, s.shot.width, s.shot.height));
+                s.phase = Phase::Drawing;
+            }
             Hit::Tool(t) => s.tool = t,
             Hit::Color(rgb) => s.color = Rgba::rgb(rgb),
             Hit::Width(w) => s.stroke_width = w,

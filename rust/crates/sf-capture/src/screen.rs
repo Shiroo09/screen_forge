@@ -46,6 +46,18 @@ impl Captured {
     }
 }
 
+/// Yakalanmış bir kareye canlı imleci bindirir. `overlay_window::draw_cursor`
+/// bunu çağırır; GDI ayrıntısı `imp` içinde kalır.
+#[cfg(windows)]
+pub fn composite_cursor(shot: &mut Captured, origin_x: i32, origin_y: i32) -> bool {
+    imp::composite_cursor(shot, origin_x, origin_y)
+}
+
+#[cfg(not(windows))]
+pub fn composite_cursor(_shot: &mut Captured, _origin_x: i32, _origin_y: i32) -> bool {
+    false
+}
+
 #[cfg(windows)]
 mod imp {
     use super::Captured;
@@ -187,6 +199,51 @@ mod imp {
     }
 
     /// Draws the live cursor icon into `target` at its on-screen position.
+    /// Yakalanmis tampona imleci bindirir: DIB'e yazar, imleci cizer, geri okur.
+    pub fn composite_cursor(shot: &mut Captured, origin_x: i32, origin_y: i32) -> bool {
+        unsafe {
+            use windows::Win32::Graphics::Gdi::{
+                CreateCompatibleDC, CreateDIBSection, DeleteDC, SelectObject,
+            };
+            let screen_dc = GetDC(None);
+            if screen_dc.is_invalid() {
+                return false;
+            }
+            let mem = CreateCompatibleDC(Some(screen_dc));
+            let _ = ReleaseDC(None, screen_dc);
+            if mem.is_invalid() {
+                return false;
+            }
+            let info = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: shot.width,
+                    biHeight: -shot.height,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
+            let Ok(dib) = CreateDIBSection(Some(mem), &info, DIB_RGB_COLORS, &mut bits, None, 0)
+            else {
+                let _ = DeleteDC(mem);
+                return false;
+            };
+            let old = SelectObject(mem, HGDIOBJ(dib.0));
+            let n = (shot.width * shot.height * 4) as usize;
+            std::ptr::copy_nonoverlapping(shot.bgra.as_ptr(), bits as *mut u8, n);
+            draw_cursor(mem, origin_x, origin_y, shot.width, shot.height);
+            std::ptr::copy_nonoverlapping(bits as *const u8, shot.bgra.as_mut_ptr(), n);
+            SelectObject(mem, old);
+            let _ = DeleteObject(HGDIOBJ(dib.0));
+            let _ = DeleteDC(mem);
+            true
+        }
+    }
+
     /// `origin_x`/`origin_y` are the virtual-screen coordinates of `target`'s
     /// top-left corner. A hidden cursor or a failing Win32 call draws nothing,
     /// matching the C# original which swallowed the same errors.

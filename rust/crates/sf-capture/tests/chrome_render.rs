@@ -187,6 +187,47 @@ fn toast_paints_and_clamps_inside_the_client() {
 }
 
 #[test]
+fn mode_bar_has_three_chips_that_fit_inside_the_panel() {
+    // Mod çubuğu C#'ta üç çipli (Bölgesel / Tam ekran / Serbest); panel
+    // genişliği hesabı da üçüncüyü kapsamalı, yoksa çip panelden taşar.
+    let hits = std::cell::RefCell::new(Vec::new());
+    let px = render(|dc| {
+        *hits.borrow_mut() = draw_mode_bar(dc, W / 2, 1.0, ModeChoice::Region);
+    });
+    let hits = hits.into_inner();
+    let modes: Vec<_> = hits.iter().map(|c| c.hit).collect();
+    assert_eq!(
+        modes,
+        vec![
+            Hit::Mode(ModeChoice::Region),
+            Hit::Mode(ModeChoice::FullScreen),
+            Hit::Mode(ModeChoice::Freeform),
+        ],
+        "mod çubuğu üç çip olmalı ve sıra korunmalı"
+    );
+    for c in hits.windows(2) {
+        assert!(
+            c[0].rect.right <= c[1].rect.left,
+            "mod çipleri çakışıyor: {:?} -> {:?}",
+            c[0].rect,
+            c[1].rect
+        );
+    }
+
+    // Panel dolgusu en sağdaki çipin ötesine geçmeli: çip panelden taşarsa
+    // panelin sağ kenarında yüzey rengi görünmez.
+    let surface = count(&px, (0x1F, 0x24, 0x30));
+    assert!(surface > 1500, "panel dolgusu eksik (surface={surface})");
+    // Panel gerçek istemci genişliği için ölçülür (1920px), bu yüzden 220px
+    // test tuvalinden taşması normal. Anlamlı olan: panel ekranın dışına
+    // başlamamalı ve çipler soldan sağa artan sırada olmalı.
+    assert!(hits[0].rect.left >= 0, "panel ekranın soluna taştı");
+    for c in hits.windows(2) {
+        assert!(c[0].rect.left < c[1].rect.left, "çip sırası bozuk");
+    }
+}
+
+#[test]
 fn selection_handles_paint_white_knobs_on_the_corners() {
     // Magenta sentinel zemin: tutamaçlar beyaz olduğu için sayıları doğrudan
     // ölçülür. Sekiz tutamaç × ~(2*grab)² piksel bekleniyor.

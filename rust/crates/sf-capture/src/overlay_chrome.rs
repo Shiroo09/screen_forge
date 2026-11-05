@@ -22,7 +22,12 @@ use windows::Win32::Graphics::Gdi::{
 pub enum ModeChoice {
     Region,
     FullScreen,
+    /// Serbest: bölge seçmeden doğrudan düzenlemeye girilir.
+    Freeform,
 }
+
+/// Mod çubuğundaki çiplerin sırası; çizim ve isabet aynı listeyi kullanır.
+const MODES: [ModeChoice; 3] = [ModeChoice::Region, ModeChoice::FullScreen, ModeChoice::Freeform];
 
 /// A button in the action bar.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -222,14 +227,15 @@ pub fn draw_mode_bar(hdc: HDC, anchor_x: i32, scale: f32, active: ModeChoice) ->
         drop(s);
 
         let s = Sel::new(hdc, &font);
-        let chip_w: Vec<i32> = [ModeChoice::Region, ModeChoice::FullScreen]
+        let chip_w: Vec<i32> = MODES
             .iter()
             .map(|m| glyph + inner_gap + text_w(hdc, mode_label(*m)) + scaled(scale, 24))
             .collect();
         drop(s);
 
-        let content =
-            pad + mark + inner_gap + word_w + sep_gap + chip_w[0] + gap + chip_w[1] + after_sep + pad;
+        // cip_w toplami + aralari + panelin iki ucu.
+        let chips_w: i32 = chip_w.iter().sum::<i32>() + gap * (chip_w.len() as i32 - 1);
+        let content = pad + mark + inner_gap + word_w + sep_gap + chips_w + after_sep + pad;
         let panel_rect = rect_at(
             (anchor_x - content / 2).max(0),
             scaled(scale, 18),
@@ -270,9 +276,9 @@ pub fn draw_mode_bar(hdc: HDC, anchor_x: i32, scale: f32, active: ModeChoice) ->
         let _ = LineTo(hdc, sep_x, (mid + sep_h) / 2);
         drop(_pen);
 
-        let mut out = Vec::with_capacity(2);
+        let mut out = Vec::with_capacity(MODES.len());
         let mut x = sep_x + sep_gap;
-        for (mode, w) in [ModeChoice::Region, ModeChoice::FullScreen].iter().zip(&chip_w) {
+        for (mode, w) in MODES.iter().zip(&chip_w) {
             let r = rect_at(x, row_top, *w, chip_h);
             let is_active = *mode == active;
             // An inactive chip is just an outline so the screenshot shows through.
@@ -303,6 +309,7 @@ fn mode_label(mode: ModeChoice) -> &'static str {
     match mode {
         ModeChoice::Region => "Bölgesel",
         ModeChoice::FullScreen => "Tam ekran",
+        ModeChoice::Freeform => "Serbest",
     }
 }
 
@@ -626,6 +633,17 @@ pub fn mode_glyph(hdc: HDC, mode: ModeChoice, rect: RECT, color: COLORREF, scale
                     let _ = MoveToEx(hdc, a.0, a.1, None);
                     let _ = LineTo(hdc, c.0, c.1);
                     let _ = LineTo(hdc, z.0, z.1);
+                }
+            }
+            ModeChoice::Freeform => {
+                // Üst üste üç kare (C# `IconLayers`): serbest yerleştirme katmanları.
+                for i in 0..3 {
+                    let o = scaled(scale, 3) * (2 - i);
+                    let _ = MoveToEx(hdc, l + o / 2, t + o / 2, None);
+                    let _ = LineTo(hdc, r - o / 2, t + o / 2);
+                    let _ = LineTo(hdc, r - o / 2, b - o / 2);
+                    let _ = LineTo(hdc, l + o / 2, b - o / 2);
+                    let _ = LineTo(hdc, l + o / 2, t + o / 2);
                 }
             }
         }
