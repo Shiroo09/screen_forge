@@ -5,6 +5,7 @@
 //! low-level hooks stay with the app shell.
 
 pub mod clipboard;
+pub mod color_picker;
 pub mod hotkey;
 pub mod editor_window;
 pub mod input_hook;
@@ -21,7 +22,7 @@ pub mod overlay;
 pub mod overlay_chrome;
 pub mod reserved_hotkeys;
 
-pub use clipboard::copy_bgra_to_clipboard;
+pub use clipboard::{copy_bgra_to_clipboard, copy_text_to_clipboard};
 pub use keys::MouseButtons;
 pub use screen::{capture_region, capture_virtual_screen, virtual_screen_bounds, Captured};
 pub use overlay::{InputOverlayOptions, Rgba};

@@ -59,7 +59,16 @@ pub fn run_tray() {
 
         items.push((
             "Renk Seçici".to_string(),
-            Box::new(|| eprintln!("renk seçici: yakında")),
+            Box::new(|| match sf_capture::color_picker::pick_color() {
+                Some(rgb) => {
+                    let hex = format!("#{rgb:06X}");
+                    match sf_capture::color_picker::copy_hex_to_clipboard(&hex) {
+                        Ok(()) => eprintln!("renk seçici: {hex} kopyalandı"),
+                        Err(e) => eprintln!("renk seçici: {hex} · pano hatası: {e}"),
+                    }
+                }
+                None => eprintln!("renk seçici: iptal"),
+            }),
         ));
         items.push((
             "Hızlı Çeviri".to_string(),

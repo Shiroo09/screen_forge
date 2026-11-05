@@ -14,6 +14,18 @@ pub fn copy_bgra_to_clipboard(_width: i32, _height: i32, _bgra: &[u8]) -> Result
     Err("clipboard copy is only supported on Windows".to_string())
 }
 
+/// Copies `text` to the clipboard as CF_UNICODETEXT. Used by the colour picker
+/// for the picked colour's hex string.
+#[cfg(windows)]
+pub fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
+    imp::copy_text(text)
+}
+
+#[cfg(not(windows))]
+pub fn copy_text_to_clipboard(_text: &str) -> Result<(), String> {
+    Err("clipboard copy is only supported on Windows".to_string())
+}
+
 #[cfg(windows)]
 mod imp {
     use windows::Win32::Foundation::{HANDLE, HGLOBAL};
@@ -22,7 +34,61 @@ mod imp {
     };
     use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
     use windows::Win32::Graphics::Gdi::{BITMAPINFOHEADER, BI_RGB};
-    use windows::Win32::System::Ole::CF_DIB;
+    use windows::Win32::System::Ole::{CF_DIB, CF_UNICODETEXT};
+
+    /// Pano başka bir süreç tarafından kilitli olabilir; kısa süre yeniden dene.
+    /// Her iki kopyalama yolu da aynı beklemeyi yapar.
+    fn open_retry() -> Result<(), String> {
+        for _ in 0..10 {
+            if unsafe { OpenClipboard(None) }.is_ok() {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+        Err("OpenClipboard failed".to_string())
+    }
+
+    /// Açık panoyu her çıkışta kapatan kilit.
+    struct ClipboardGuard;
+    impl Drop for ClipboardGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseClipboard();
+            }
+        }
+    }
+
+    /// CF_UNICODETEXT: UTF-16, sonlandırıcı NUL dahil.
+    pub fn copy_text(text: &str) -> Result<(), String> {
+        let mut wide: Vec<u16> = text.encode_utf16().collect();
+        wide.push(0);
+        let bytes = wide.len() * std::mem::size_of::<u16>();
+
+        unsafe {
+            let handle = GlobalAlloc(GMEM_MOVEABLE, bytes).map_err(|e| format!("GlobalAlloc: {e}"))?;
+
+            let ptr = GlobalLock(handle);
+            if ptr.is_null() {
+                let _ = windows::Win32::Foundation::GlobalFree(Some(handle));
+                return Err("GlobalLock failed".to_string());
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, ptr as *mut u8, bytes);
+            let _ = GlobalUnlock(handle);
+
+            if let Err(e) = open_retry() {
+                let _ = windows::Win32::Foundation::GlobalFree(Some(handle));
+                return Err(e);
+            }
+            let _guard = ClipboardGuard;
+
+            EmptyClipboard().map_err(|e| format!("EmptyClipboard: {e}"))?;
+            SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(handle.0)))
+                .map_err(|e| format!("SetClipboardData: {e}"))?;
+
+            // Ownership transferred to the clipboard; do not free it here.
+            Ok(())
+        }
+    }
 
     pub fn copy_bgra(width: i32, height: i32, bgra: &[u8]) -> Result<(), String> {
         if width <= 0 || height <= 0 || bgra.len() < (width * height * 4) as usize {
@@ -72,28 +138,9 @@ mod imp {
 
             let _ = GlobalUnlock(handle);
 
-            // Pano başka bir süreç tarafından kilitli olabilir; kısa süre yeniden dene.
-            let mut opened = false;
-            for _ in 0..10 {
-                if OpenClipboard(None).is_ok() {
-                    opened = true;
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(30));
-            }
-            if !opened {
+            if let Err(e) = open_retry() {
                 let _ = windows::Win32::Foundation::GlobalFree(Some(handle));
-                return Err("OpenClipboard failed".to_string());
-            }
-
-            // RAII: always close the clipboard.
-            struct ClipboardGuard;
-            impl Drop for ClipboardGuard {
-                fn drop(&mut self) {
-                    unsafe {
-                        let _ = CloseClipboard();
-                    }
-                }
+                return Err(e);
             }
             let _guard = ClipboardGuard;
 

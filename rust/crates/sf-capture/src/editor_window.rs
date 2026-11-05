@@ -7,7 +7,74 @@
 //! reusing the pure selection state and the `sf_draw` rasterizer.
 
 use crate::selection::SelectionRect;
+pub use self::placed::PlacedShape;
 use sf_draw::model::Shape;
+
+mod placed {
+    use sf_draw::model::Shape;
+
+    /// A shape the user placed, plus the pointer the pointer tool drags.
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct PlacedShape {
+        pub shape: Shape,
+        /// (x, y, w, h) in virtual-screen coordinates — bounds of `shape`.
+        pub bounds: (f32, f32, f32, f32),
+    }
+
+    impl PlacedShape {
+        /// Bounds of a shape, so the pointer tool can hit-test and drag it.
+        pub fn from_shape(shape: Shape) -> Self {
+            use Shape::*;
+            let bounds = match &shape {
+                Rect { x, y, w, h, .. } | Ellipse { x, y, w, h, .. } | Blur { x, y, w, h, .. } => {
+                    (*x, *y, *w, *h)
+                }
+                Arrow { x0, y0, x1, y1, .. } | Line { x0, y0, x1, y1, .. } => {
+                    (x0.min(*x1), y0.min(*y1), (x1 - x0).abs(), (y1 - y0).abs())
+                }
+                Pen { points, .. } | Highlight { points, .. } => bounds_of(points),
+                Step { cx, cy, radius, .. } => (cx - radius, cy - radius, radius * 2.0, radius * 2.0),
+                // Text and other anchored shapes measure from their anchor; a fixed
+                // box keeps them selectable without a text metric.
+                Text { x, y, scale, .. } => (*x, *y, 120.0 * scale / 2.0, 24.0 * scale),
+            };
+            Self { shape, bounds }
+        }
+
+        /// Moves the shape and its bounds by the same delta.
+        pub fn shift(&mut self, dx: f32, dy: f32) -> bool {
+            if dx == 0.0 && dy == 0.0 {
+                return false;
+            }
+            self.shape = self.shape.translate(dx, dy);
+            self.bounds.0 += dx;
+            self.bounds.1 += dy;
+            true
+        }
+
+        /// True when (x, y) is inside the bounds, padded so thin shapes are grabbable.
+        pub fn contains(&self, x: f32, y: f32) -> bool {
+            const PAD: f32 = 4.0;
+            let (bx, by, bw, bh) = self.bounds;
+            x >= bx - PAD && x <= bx + bw + PAD && y >= by - PAD && y <= by + bh + PAD
+        }
+    }
+
+    /// Axis-aligned bounds of a point run.
+    fn bounds_of(points: &[(f32, f32)]) -> (f32, f32, f32, f32) {
+        if points.is_empty() {
+            return (0.0, 0.0, 0.0, 0.0);
+        }
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for (x, y) in points {
+            x0 = x0.min(*x);
+            y0 = y0.min(*y);
+            x1 = x1.max(*x);
+            y1 = y1.max(*y);
+        }
+        (x0, y0, x1 - x0, y1 - y0)
+    }
+}
 
 /// The result of an editing session.
 pub struct EditResult {
@@ -36,6 +103,7 @@ pub fn edit_region() -> Option<EditResult> {
 #[cfg(windows)]
 mod imp {
     use super::{EditResult, SelectionRect};
+    use super::PlacedShape;
     use crate::overlay_chrome::{self, Action, Clickable, Hit, ModeChoice};
     use crate::selection::SelectionState;
     use sf_draw::canvas::Canvas;
@@ -52,14 +120,30 @@ mod imp {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, IsWindow,
-        LoadCursorW, RegisterClassW, SetForegroundWindow, ShowWindow, CS_HREDRAW, CS_VREDRAW, MSG,
-        SW_SHOW, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN,
-        WS_EX_TOPMOST, WS_POPUP, WNDCLASSW,
+        LoadCursorW, RegisterClassW, SetForegroundWindow, ShowWindow, TranslateMessage, CS_HREDRAW,
+        CS_VREDRAW, MSG,
+        SW_SHOW, WM_CHAR, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT,
+        WM_RBUTTONDOWN, WS_EX_TOPMOST, WS_POPUP, WNDCLASSW,
     };
 
     const VK_ESCAPE: usize = 0x1B;
     const VK_TAB: usize = 0x09;
     const VK_RETURN: usize = 0x0D;
+    const VK_BACK: usize = 0x08;
+    const VK_Z: usize = 0x5A;
+    const VK_Y: usize = 0x59;
+
+    /// Ctrl basılı mı. Kısayol ayrımı için gereken en küçük durum sorgusu.
+    fn ctrl_down() -> bool {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL};
+        unsafe { GetKeyState(VK_CONTROL.0 as i32) < 0 }
+    }
+
+    fn shift_down() -> bool {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
+        unsafe { GetKeyState(VK_SHIFT.0 as i32) < 0 }
+    }
+
     const MIN_SIZE: i32 = 4;
     const IDC_CROSS: u16 = 32515;
 
@@ -78,7 +162,13 @@ mod imp {
         phase: Phase,
         tool: Tool,
         color: Rgba,
-        shapes: Vec<Shape>,
+        shapes: Vec<PlacedShape>,
+        /// Geri alınan şekiller; "Yinele" buradan geri getirir.
+        redo: Vec<PlacedShape>,
+        /// Metin aracı için tuş vuruşları; Enter ile şekle dönüşür.
+        text_buf: String,
+        /// Pointer aracıyla sürüklenen şeklin indeksi ve kavrama noktası.
+        moving: Option<(usize, f32, f32)>,
         drag_start: (f32, f32),
         pen_points: Vec<(f32, f32)>,
         step_count: u32,
@@ -128,6 +218,9 @@ mod imp {
                 tool: Tool::Rect,
                 color: Rgba::rgb(0xEA6F12),
                 shapes: Vec::new(),
+                redo: Vec::new(),
+                text_buf: String::new(),
+                moving: None,
                 drag_start: (0.0, 0.0),
                 pen_points: Vec::new(),
                 step_count: 0,
@@ -182,6 +275,9 @@ mod imp {
 
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
+                // TranslateMessage olmadan WM_KEYDOWN hiçbir zaman WM_CHAR'a
+                // çevrilmez; metin aracı sessizce ölü kalır.
+                let _ = TranslateMessage(&msg);
                 let _ = DispatchMessageW(&msg);
                 if !IsWindow(Some(hwnd)).as_bool() {
                     break;
@@ -199,7 +295,7 @@ mod imp {
             };
             Some(EditResult {
                 region,
-                shapes: state.shapes.clone(),
+                shapes: state.shapes.iter().map(|p| p.shape.clone()).collect(),
                 action,
                 stroke_width: state.stroke_width as f32,
             })
@@ -243,6 +339,14 @@ mod imp {
                             // koordinatına pencere başlangıcını ekle.
                             s.pen_points.push(virt(s, x, y));
                         }
+                        // Pointer taşıma: kavranan şekil imleci izler.
+                        if let Some((i, ox, oy)) = s.moving {
+                            let (vx, vy) = virt(s, x, y);
+                            if let Some(p) = s.shapes.get_mut(i) {
+                                p.shift(vx - ox, vy - oy);
+                            }
+                            s.moving = Some((i, vx, vy));
+                        }
                         let _ = InvalidateRect(Some(hwnd), None, false);
                     }
                 }
@@ -259,9 +363,26 @@ mod imp {
                 match s.phase {
                     Phase::Selecting => s.selection.begin(x, y),
                     Phase::Drawing => {
-                        s.drag_start = virt(s, x, y);
-                        if s.tool == Tool::Pen {
-                            s.pen_points = vec![virt(s, x, y)];
+                        let (vx, vy) = virt(s, x, y);
+                        s.drag_start = (vx, vy);
+                        match s.tool {
+                            Tool::Pen => s.pen_points = vec![(vx, vy)],
+                            // Pointer en üstteki şekli kavrar; hiçbiri değilse
+                            // hiçbir şey taşınmaz.
+                            Tool::Select => {
+                                s.moving = s
+                                    .shapes
+                                    .iter()
+                                    .rposition(|p| p.contains(vx, vy))
+                                    .map(|i| (i, vx, vy));
+                                if let Some((i, ..)) = s.moving {
+                                    // Kavranan şekil öne gelir, taşıma görünür olsun.
+                                    let p = s.shapes.remove(i);
+                                    s.shapes.push(p);
+                                    s.moving = Some((s.shapes.len() - 1, vx, vy));
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -292,7 +413,11 @@ mod imp {
                     }
                     Phase::Drawing => {
                         let (vx, vy) = virt(s, x, y);
-                        commit_shape(s, vx, vy);
+                        match s.tool {
+                            Tool::Select => s.moving = None,
+                            Tool::Text => {} // metin Enter ile yazılır
+                            _ => commit_shape(s, vx, vy),
+                        }
                         let _ = InvalidateRect(Some(hwnd), None, false);
                     }
                 }
@@ -305,6 +430,28 @@ mod imp {
                 LRESULT(0)
             }
             WM_KEYDOWN => {
+                // Metin aracı tuş vuruşlarını karaktere çevirir; diğer araçlarda
+                // kısayollar geçerli.
+                if s.tool == Tool::Text && s.phase == Phase::Drawing {
+                    match wparam.0 {
+                        VK_ESCAPE => {
+                            s.text_buf.clear();
+                            let _ = InvalidateRect(Some(hwnd), None, false);
+                        }
+                        VK_RETURN => {
+                            commit_text(s);
+                            let _ = InvalidateRect(Some(hwnd), None, false);
+                        }
+                        VK_BACK => {
+                            s.text_buf.pop();
+                            let _ = InvalidateRect(Some(hwnd), None, false);
+                        }
+                        _ => {}
+                    }
+                    // Karakter ekleme WM_CHAR'da yapılır: klavye düzeni, ölü
+                    // tuşlar ve Unicode oradan doğru gelir.
+                    return LRESULT(0);
+                }
                 match wparam.0 {
                     VK_ESCAPE => {
                         s.cancelled = true;
@@ -314,11 +461,34 @@ mod imp {
                         s.tool = s.tool.next();
                         let _ = InvalidateRect(Some(hwnd), None, false);
                     }
+                    // Ctrl+Z geri al, Ctrl+Y (veya Ctrl+Shift+Z) yinele.
+                    VK_Z if ctrl_down() => {
+                        let changed = if shift_down() { redo(s) } else { undo(s) };
+                        if changed {
+                            let _ = InvalidateRect(Some(hwnd), None, false);
+                        }
+                    }
+                    VK_Y if ctrl_down() => {
+                        if redo(s) {
+                            let _ = InvalidateRect(Some(hwnd), None, false);
+                        }
+                    }
                     // Enter finishes the edit once drawing has begun.
                     VK_RETURN if s.phase == Phase::Drawing => {
                         let _ = DestroyWindow(hwnd);
                     }
                     _ => {}
+                }
+                LRESULT(0)
+            }
+            // Metin aracı yalnız çevrilmiş karakteri kabul eder; kontrol
+            // karakterleri (Enter, Esc, Backspace) WM_KEYDOWN'da işlenir.
+            WM_CHAR if s.tool == Tool::Text && s.phase == Phase::Drawing => {
+                if let Some(c) = char::from_u32(wparam.0 as u32) {
+                    if !c.is_control() && s.text_buf.chars().count() < 64 {
+                        s.text_buf.push(c);
+                        let _ = InvalidateRect(Some(hwnd), None, false);
+                    }
                 }
                 LRESULT(0)
             }
@@ -405,62 +575,104 @@ mod imp {
         if (x - sx).abs() < MIN_DRAG && (y - sy).abs() < MIN_DRAG {
             return;
         }
-        match s.tool {
+        let shape = match s.tool {
             Tool::Rect => {
                 let (rx, ry, rw, rh) = norm(sx, sy, x, y);
-                s.shapes.push(Shape::Rect { x: rx, y: ry, w: rw, h: rh, color: s.color });
+                Shape::Rect { x: rx, y: ry, w: rw, h: rh, color: s.color }
             }
             Tool::Ellipse => {
                 let (rx, ry, rw, rh) = norm(sx, sy, x, y);
-                s.shapes.push(Shape::Ellipse { x: rx, y: ry, w: rw, h: rh, color: s.color });
+                Shape::Ellipse { x: rx, y: ry, w: rw, h: rh, color: s.color }
             }
-            Tool::Arrow => s.shapes.push(Shape::Arrow { x0: sx, y0: sy, x1: x, y1: y, color: s.color }),
-            Tool::Line => s.shapes.push(Shape::Line { x0: sx, y0: sy, x1: x, y1: y, color: s.color }),
-            Tool::Pen => {
-                s.shapes.push(Shape::Pen { points: std::mem::take(&mut s.pen_points), color: s.color });
-            }
+            Tool::Arrow => Shape::Arrow { x0: sx, y0: sy, x1: x, y1: y, color: s.color },
+            Tool::Line => Shape::Line { x0: sx, y0: sy, x1: x, y1: y, color: s.color },
+            Tool::Pen => Shape::Pen {
+                points: std::mem::take(&mut s.pen_points),
+                color: s.color,
+            },
             Tool::Step => {
                 s.step_count += 1;
-                s.shapes.push(Shape::Step {
+                Shape::Step {
                     cx: x,
                     cy: y,
                     radius: 18.0,
                     number: s.step_count,
                     color: s.color,
-                });
+                }
             }
-            Tool::Text => {
-                // No text-entry dialog in the overlay yet: place a caption at the
-                // click point. The caller can edit the string before export.
-                s.shapes.push(Shape::Text {
-                    x,
-                    y,
-                    text: "TEXT".to_string(),
-                    scale: 2.0,
-                    color: s.color,
-                    ribbon: true,
-                });
-            }
+            // Metin araçta yazılır: buraya yalnız Enter sonrası gelinir.
+            Tool::Text => return,
             Tool::Blur => {
                 let (rx, ry, rw, rh) = norm(sx, sy, x, y);
-                s.shapes.push(Shape::Blur {
+                Shape::Blur {
                     x: rx,
                     y: ry,
                     w: rw,
                     h: rh,
                     kind: sf_draw::blur::MaskKind::Blur,
                     strength: 8.0,
-                });
+                }
             }
-            Tool::Highlight => {
-                s.shapes.push(Shape::Highlight {
-                    points: vec![(sx, sy), (x, y)],
-                    color: s.color,
-                    width: 14.0,
-                });
+            Tool::Highlight => Shape::Highlight {
+                points: vec![(sx, sy), (x, y)],
+                color: s.color,
+                width: 14.0,
+            },
+            // Select taşımaya ayrıldı; kendi şeklini üretmez.
+            Tool::Select => return,
+        };
+        push_shape(s, shape);
+    }
+
+    /// Şekli ekler ve yineleme yığınını geçersiz kılar: yeni bir düzenleme
+    /// yapıldığında "Yinele" artık anlamsızdır.
+    fn push_shape(s: &mut State, shape: Shape) {
+        s.shapes.push(PlacedShape::from_shape(shape));
+        s.redo.clear();
+    }
+
+    /// Metin aracı: tuş vuruşlarıyla yazılan dizgeyi şekle çevirir ve aracı
+    /// bırakır — aksi halde Enter her basışta yutulur ve düzenleme hiç bitmez.
+    fn commit_text(s: &mut State) {
+        let text = s.text_buf.trim().to_string();
+        s.text_buf.clear();
+        s.tool = Tool::Select;
+        if text.is_empty() {
+            return;
+        }
+        let (x, y) = s.drag_start;
+        push_shape(
+            s,
+            Shape::Text {
+                x,
+                y,
+                text,
+                scale: 2.0,
+                color: s.color,
+                ribbon: true,
+            },
+        );
+    }
+
+    /// Bir adım geri: en son şekli yineleme yığınına taşır.
+    fn undo(s: &mut State) -> bool {
+        match s.shapes.pop() {
+            Some(p) => {
+                s.redo.push(p);
+                true
             }
-            // Select has no shape of its own (it would move existing items).
-            Tool::Select => {}
+            None => false,
+        }
+    }
+
+    /// Bir adım ileri: geri alınan son şekli geri getirir.
+    fn redo(s: &mut State) -> bool {
+        match s.redo.pop() {
+            Some(p) => {
+                s.shapes.push(p);
+                true
+            }
+            None => false,
         }
     }
 
@@ -540,11 +752,24 @@ mod imp {
         dim_outside(&mut buffer, w, h, keep);
         {
             let mut canvas = Canvas::new(&mut buffer, w, h);
-            for shape in &s.shapes {
+            let (ox, oy) = (-(s.origin.0 as f32), -(s.origin.1 as f32));
+            for placed in &s.shapes {
+                model::render_with(&mut canvas, &placed.shape.translate(ox, oy), s.stroke_width as f32);
+            }
+            // Metin aracı: yazılan dizge henüz şekil değil, ama kullanıcı
+            // ne yazdığını görmeli.
+            if s.tool == Tool::Text && !s.text_buf.is_empty() {
                 model::render_with(
                     &mut canvas,
-                    &shape.translate(-(s.origin.0 as f32), -(s.origin.1 as f32)),
-                    s.stroke_width as f32,
+                    &Shape::Text {
+                        x: s.drag_start.0 + ox,
+                        y: s.drag_start.1 + oy,
+                        text: s.text_buf.clone(),
+                        scale: 2.0,
+                        color: s.color,
+                        ribbon: true,
+                    },
+                    2.0,
                 );
             }
         }

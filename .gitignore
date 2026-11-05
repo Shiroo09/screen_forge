@@ -52,3 +52,8 @@ iscc_err.txt
 
 # scratch
 /finalshot.ps1
+
+# Hafıza dosyaları: public repoda asla commit edilmez (CLAUDE.md kuralı).
+.serena/memories/
+.claude/memory/
+**/*.private.json

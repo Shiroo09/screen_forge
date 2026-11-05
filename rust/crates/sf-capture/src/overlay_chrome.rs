@@ -83,7 +83,7 @@ const TOOLS: [Tool; 10] = [
 ];
 
 /// Design tokens are authored as `0xRRGGBB`; GDI wants `0x00BBGGRR`.
-fn cref(rgb: u32) -> COLORREF {
+pub(crate) fn cref(rgb: u32) -> COLORREF {
     COLORREF(((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF))
 }
 
@@ -102,7 +102,7 @@ fn rect_at(l: i32, t: i32, w: i32, h: i32) -> RECT {
 }
 
 /// A GDI object that deletes itself, so no draw path can leak one.
-struct GdiObj(HGDIOBJ);
+pub(crate) struct GdiObj(pub(crate) HGDIOBJ);
 
 impl Drop for GdiObj {
     fn drop(&mut self) {
@@ -113,14 +113,14 @@ impl Drop for GdiObj {
 }
 
 /// Selects `obj` into `hdc` and restores the previous selection on drop.
-struct Sel<'a> {
+pub(crate) struct Sel<'a> {
     hdc: HDC,
     old: HGDIOBJ,
     _obj: &'a GdiObj,
 }
 
 impl<'a> Sel<'a> {
-    unsafe fn new(hdc: HDC, obj: &'a GdiObj) -> Self {
+    pub(crate) unsafe fn new(hdc: HDC, obj: &'a GdiObj) -> Self {
         let old = SelectObject(hdc, obj.0);
         Self { hdc, old, _obj: obj }
     }
@@ -176,7 +176,7 @@ unsafe fn text_center(hdc: HDC, rect: RECT, text: &str) {
 }
 
 /// A chip or panel: filled rounded rect plus its 1px border.
-unsafe fn chrome(hdc: HDC, r: RECT, radius: i32, fill: Option<COLORREF>, border: Option<COLORREF>) {
+pub(crate) unsafe fn chrome(hdc: HDC, r: RECT, radius: i32, fill: Option<COLORREF>, border: Option<COLORREF>) {
     let fill_brush = match fill {
         Some(c) => Some(GdiObj(CreateSolidBrush(c).into())),
         // No fill means the screenshot underneath stays visible.
