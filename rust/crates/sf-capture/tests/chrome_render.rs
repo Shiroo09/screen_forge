@@ -5,8 +5,8 @@
 #![cfg(windows)]
 
 use sf_capture::overlay_chrome::{
-    draw_action_bar, draw_mode_bar, draw_option_bar, draw_selection_handles, draw_size_badge,
-    draw_toast, draw_tool_strip, Action, Hit, ModeChoice,
+    draw_action_bar, draw_mode_bar, draw_option_bar, draw_selection_border,
+    draw_selection_handles, draw_size_badge, draw_toast, draw_tool_strip, Action, Hit, ModeChoice,
 };
 use sf_draw::model::Tool;
 use windows::Win32::Graphics::Gdi::{
@@ -234,7 +234,7 @@ fn selection_handles_paint_white_knobs_on_the_corners() {
     let px = render(|dc| {
         draw_selection_handles(dc, (40, 20, 140, 50), 6, 1.0);
     });
-    let white = count(&px, (0xF2, 0xF4, 0xF8));
+    let white = count(&px, (255, 255, 255));
     println!("--- selection handles ---\n{}", map(&px));
     println!("white={white}");
     // 8 tutamaç, 12×12 kare, yuvarlatma köşeleri yer: ~1000 beklenir.
@@ -262,6 +262,46 @@ fn selection_handles_paint_white_knobs_on_the_corners() {
     for y in [32, 34] {
         assert!(accent_at(40, y), "sol kenar kopuk: y={y}");
         assert!(accent_at(179, y), "sağ kenar kopuk: y={y}");
+    }
+}
+
+#[test]
+fn selection_border_dashes_every_edge_without_filling_the_inside() {
+    // Kullanıcının şikâyeti: düzenleme aşamasında nereyi seçtiği belli değil.
+    // Sınır dört kenarda da kesikli beyaz olmalı, içi boyanmamalı. ASCII
+    // haritası 2px adımla örneklediği için 1px kesikli çizgiyi göstermez;
+    // bu yüzden kenarlar tek tek taranır.
+    let px = render(|dc| draw_selection_border(dc, (40, 20, 140, 50), 1.0));
+    println!("--- selection border ---\n{}", map(&px));
+
+    let white = count(&px, (255, 255, 255));
+    // 2*(140+50) ≈ 380 piksel çevre; 6 açık / 4 kapalı → ~60% beyaz.
+    println!("white={white}");
+    assert!(
+        (180..=320).contains(&white),
+        "kesikli sınır beklenen yoğunlukta değil (white={white})"
+    );
+
+    let sentinel = count(&px, (255, 0, 255));
+    // İç alan 139*49 ≈ 6811 piksel; sınır yalnız çevre olmalı.
+    assert!(sentinel > 6000, "seçim içi boyanmış (sentinel={sentinel})");
+
+    let is_white = |x: i32, y: i32| {
+        let i = ((y * W + x) * 4) as usize;
+        (px[i], px[i + 1], px[i + 2]) == (255, 255, 255)
+    };
+    // Her kenarda hem boyanmış hem boşluk pikseli bulunmalı: kesik deseni
+    // ancak böyle kanıtlanır, sürekli çizgi de "beyaz var" testini geçerdi.
+    for (name, coords) in [
+        ("üst", (0..140).map(|d| (40 + d, 20)).collect::<Vec<_>>()),
+        ("alt", (0..140).map(|d| (40 + d, 69)).collect::<Vec<_>>()),
+        ("sol", (0..50).map(|d| (40, 20 + d)).collect::<Vec<_>>()),
+        ("sağ", (0..50).map(|d| (179, 20 + d)).collect::<Vec<_>>()),
+    ] {
+        let painted = coords.iter().filter(|(x, y)| is_white(*x, *y)).count();
+        let gaps = coords.len() - painted;
+        assert!(painted > 0, "{name} kenarında hiç beyaz yok");
+        assert!(gaps > 0, "{name} kenarı kesiksiz: sürekli çizgi çizilmiş");
     }
 }
 

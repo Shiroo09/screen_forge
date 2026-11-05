@@ -64,6 +64,9 @@ const TEXT: u32 = 0xF2F4F8;
 const TEXT_DIM: u32 = 0x9AA4B8;
 const ACCENT: u32 = 0xEA6F12;
 const WHITE: u32 = 0xF2F4F8;
+/// Saf beyaz: yalnız seçim sınırı ve boyutlandırma tutamaçları. Metin için
+/// `WHITE` (0xF2F4F8) kullanılır — ikisi karıştırılırsa krom beyaza kayar.
+const PURE_WHITE: u32 = 0xFFFFFF;
 const TOAST_INK: u32 = 0xEAF0F7;
 
 /// Stroke widths offered by the option bar, in logical pixels.
@@ -1013,7 +1016,7 @@ pub fn draw_selection_handles(hdc: HDC, rect: (i32, i32, i32, i32), grab: i32, s
         (x, y + h),
         (x, y + h / 2),
     ];
-    let fill = unsafe { GdiObj(CreateSolidBrush(cref(WHITE)).into()) };
+    let fill = unsafe { GdiObj(CreateSolidBrush(cref(PURE_WHITE)).into()) };
     let edge = unsafe { GdiObj(CreatePen(PS_SOLID, scaled(scale, 1).max(1), cref(ACCENT)).into()) };
     unsafe {
         let _pen = Sel::new(hdc, &edge);
@@ -1021,6 +1024,47 @@ pub fn draw_selection_handles(hdc: HDC, rect: (i32, i32, i32, i32), grab: i32, s
         for (cx, cy) in centers {
             let r = rect_at(cx - half, cy - half, half * 2, half * 2);
             let _ = RoundRect(hdc, r.left, r.top, r.right, r.bottom, half, half);
+        }
+    }
+    let _ = unsafe { RestoreDC(hdc, saved) };
+}
+
+/// Düzenleme aşamasında seçim sınırı: beyaz kesikli çerçeve (C#
+/// `SelectionBorder`, 1.5px, 6-4 kesik). Koyu masaüstünde karartma farkı
+/// görünmediği için kullanıcı nereyi seçtiğini bu çerçeveden anlar.
+pub fn draw_selection_border(hdc: HDC, rect: (i32, i32, i32, i32), scale: f32) {
+    let (x, y, w, h) = rect;
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    // Kalem 1px: GDI'da PS_DASH yalnız kozmetik (1px) kalemle çalışır; C#'ın
+    // 1.5px'i 96 DPI'da zaten 1 fiziksel piksele yuvarlanır.
+    let on = scaled(scale, 6).max(2);
+    let off = scaled(scale, 4).max(2);
+    let pen = unsafe { GdiObj(CreatePen(PS_SOLID, 1, cref(PURE_WHITE)).into()) };
+    let saved = unsafe { SaveDC(hdc) };
+    unsafe {
+        let _p = Sel::new(hdc, &pen);
+        let (l, t, r, b) = (x, y, x + w - 1, y + h - 1);
+        // Yatay iki kenar.
+        for yy in [t, b] {
+            let mut cx = l;
+            while cx <= r {
+                let end = (cx + on).min(r);
+                let _ = MoveToEx(hdc, cx, yy, None);
+                let _ = LineTo(hdc, end, yy);
+                cx = end + off;
+            }
+        }
+        // Dikey iki kenar (köşeleri tekrar çizmez).
+        for xx in [l, r] {
+            let mut cy = t + on + off;
+            while cy <= b - on {
+                let end = (cy + on).min(b);
+                let _ = MoveToEx(hdc, xx, cy, None);
+                let _ = LineTo(hdc, xx, end);
+                cy = end + off;
+            }
         }
     }
     let _ = unsafe { RestoreDC(hdc, saved) };

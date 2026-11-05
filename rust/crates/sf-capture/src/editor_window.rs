@@ -900,12 +900,15 @@ mod imp {
             let _ = DeleteObject(HGDIOBJ(white.0));
         }
 
-        // Bitmiş seçim: kenar çerçevesi + boyutlandırma tutamaçları. Tutamaçlar
-        // görünmezse kullanıcı seçimi değiştirebileceğini bilmiyor.
+        // Bitmiş seçim: sınır her aşamada görünür olmalı. Koyu masaüstünde
+        // karartma farkı gözle ayırt edilemiyor, bu yüzden düzenlemede de
+        // C#'taki kesikli beyaz çerçeve çizilir; seçim aşamasında ayrıca
+        // boyutlandırma tutamaçları eklenir.
         if let Some(r) = s.region {
+            let rect = (r.0 - s.origin.0, r.1 - s.origin.1, r.2, r.3);
+            overlay_chrome::draw_selection_border(hdc, rect, s.scale);
             if s.phase == Phase::Selecting {
                 let d = drag_cfg(s);
-                let rect = (r.0 - s.origin.0, r.1 - s.origin.1, r.2, r.3);
                 overlay_chrome::draw_selection_handles(hdc, rect, d.grab, s.scale);
             }
         }
